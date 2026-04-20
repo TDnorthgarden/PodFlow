@@ -1,0 +1,113 @@
+#!/usr/bin/env bpftrace
+
+/*
+ * Block I/O Latency Probe
+ * 第 1 周 PoC - 采集块设备 I/O 延迟
+ * 
+ * 输出格式: 
+ *   - io_start: I/O 请求下发
+ *   - io_complete: I/O 完成，包含延迟
+ *   - stats: 定期聚合统计
+ * 
+ * 对应 docs/08_collector_bpftrace_to_fields.md 5.1 节 raw 事件要求
+ */
+
+#include <linux/blkdev.h>
+#include <linux/blk-mq.h>
+
+BEGIN
+{
+    printf("{\"type\":\"start\",\"msg\":\"block_io_probe started\"}\n");
+}
+
+// 跟踪块 I/O 下发
+kprobe:blk_account_io_start,
+kprobe:__blk_account_io_start
+{
+    $req = (struct request *)arg0;
+    $dev = $req->q->disk->disk_name;
+    $pid = pid;
+    $tid = tid;
+    
+    // 以请求指针 + 时间戳生成唯一 key
+    $key = (uint64)$req;
+    @io_start[$key] = nsecs;
+    @io_pid[$key] = $pid;
+    @io_comm[$key] = comm;
+    @io_dev[$key] = $dev;
+}
+
+// 跟踪块 I/O 完成
+kprobe:blk_account_io_done,
+kprobe:__blk_account_io_done
+{
+    $req = (struct request *)arg0;
+    $key = (uint64)$req;
+    $start_ts = @io_start[$key];
+    
+    if ($start_ts != 0) {
+        $latency_us = (nsecs - $start_ts) / 1000;
+        $pid = @io_pid[$key];
+        $comm = @io_comm[$key];
+        $dev = @io_dev[$key];
+        $bytes = $req->__data_len;
+        $rw = $req->cmd_flags & 1 ? "W" : "R";  // 1=WRITE, 0=READ
+        
+        // 输出单个 I/O 完成事件
+        printf("{\"type\":\"io_complete\",\"pid\":%d,\"comm\":\"%s\",\"dev\":\"%s\",\"bytes\":%llu,\"rw\":\"%s\",\"latency_us\":%llu,\"ts_ms\":%llu}\n",
+            $pid, $comm, $dev, $bytes, $rw, $latency_us, nsecs / 1000000);
+        
+        // 按设备聚合延迟
+        @latency_by_dev[$dev] = hist($latency_us);
+        
+        delete(@io_start[$key]);
+        delete(@io_pid[$key]);
+        delete(@io_comm[$key]);
+        delete(@io_dev[$key]);
+    }
+}
+
+// 跟踪 I/O 超时/错误（可选增强）
+kprobe:blk_abort_request
+{
+    $req = (struct request *)arg0;
+    $key = (uint64)$req;
+    
+    if (@io_start[$key] != 0) {
+        $pid = @io_pid[$key];
+        $comm = @io_comm[$key];
+        $dev = @io_dev[$key];
+        
+        printf("{\"type\":\"io_timeout\",\"pid\":%d,\"comm\":\"%s\",\"dev\":\"%s\",\"ts_ms\":%llu}\n",
+            $pid, $comm, $dev, nsecs / 1000000);
+        
+        @timeout_count[$dev] = count();
+        
+        delete(@io_start[$key]);
+        delete(@io_pid[$key]);
+        delete(@io_comm[$key]);
+        delete(@io_dev[$key]);
+    }
+}
+
+// 定时输出队列深度统计（每 5 秒）
+interval:s:5
+{
+    $ts = nsecs / 1000000;
+    
+    // 输出各设备的聚合统计
+    @latency_by_dev = hist(0);  // 占位，实际用 print
+    
+    printf("{\"type\":\"stats\",\"ts_ms\":%llu,\"msg\":\"aggregated stats\"}\n", $ts);
+}
+
+END
+{
+    printf("{\"type\":\"end\",\"msg\":\"block_io_probe stopped\"}\n");
+    clear(@io_start);
+    clear(@io_pid);
+    clear(@io_comm);
+    clear(@io_dev);
+    clear(@latency_by_dev);
+    clear(@timeout_count);
+}

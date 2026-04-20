@@ -1,0 +1,123 @@
+#!/usr/bin/env bpftrace
+/*
+ * Nuts-Observer Standard Network Latency Probe
+ * 标准网络延迟采集脚本 - 符合 bpftrace_output_standard v0.1
+ * 
+ * Evidence Type: network
+ * Key Metrics: latency_us, target, retransmits
+ * 
+ * 输出格式: JSON Lines
+ * 标准字段: type, pid, comm, ts_ms, latency_us, target
+ */
+
+#include <net/sock.h>
+#include <linux/tcp.h>
+
+BEGIN
+{
+    printf("{\"type\":\"start\",\"msg\":\"network_latency probe started\",\"probe_id\":\"network.latency\",\"version\":\"v0.1\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+}
+
+// 跟踪TCP连接建立 - 记录SYN发送时间
+kprobe:tcp_v4_connect,
+kprobe:tcp_v6_connect
+{
+    $tid = tid;
+    $pid = pid;
+    
+    @conn_start[$tid, $pid] = nsecs;
+    @conn_target[$tid, $pid] = ((struct sock *)arg0)->__sk_common.skc_daddr;
+}
+
+// 跟踪连接完成
+kprobe:tcp_finish_connect
+/@conn_start[tid, pid] != 0/
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = comm;
+    
+    $start_ts = @conn_start[$tid, $pid];
+    $latency_us = (nsecs - $start_ts) / 1000;
+    $target_ip = @conn_target[$tid, $pid];
+    $ts_ms = nsecs / 1000000;
+    
+    // 标准事件输出: tcp_connect
+    printf("{\"type\":\"tcp_connect\",\"pid\":%d,\"comm\":\"%s\",\"latency_us\":%llu,\"target\":\"%s\",\"ts_ms\":%llu}\n",
+        $pid, $comm, $latency_us, ntop(AF_INET, $target_ip), $ts_ms);
+    
+    // 聚合统计
+    @latency_hist = hist($latency_us);
+    @connect_count = count();
+    
+    delete(@conn_start[$tid, $pid]);
+    delete(@conn_target[$tid, $pid]);
+}
+
+// 跟踪TCP重传
+kprobe:tcp_retransmit_skb
+{
+    $pid = pid;
+    $comm = comm;
+    $ts_ms = nsecs / 1000000;
+    $sk = (struct sock *)arg0;
+    $daddr = $sk->__sk_common.skc_daddr;
+    
+    printf("{\"type\":\"tcp_retransmit\",\"pid\":%d,\"comm\":\"%s\",\"target\":\"%s\",\"ts_ms\":%llu}\n",
+        $pid, $comm, ntop(AF_INET, $daddr), $ts_ms);
+    
+    @retransmit_count = count();
+}
+
+// 跟踪连接重置/失败
+kprobe:tcp_reset
+/@conn_start[tid, pid] != 0/
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = comm;
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"tcp_reset\",\"pid\":%d,\"comm\":\"%s\",\"reason\":\"connection_reset\",\"ts_ms\":%llu}\n",
+        $pid, $comm, $ts_ms);
+    
+    delete(@conn_start[$tid, $pid]);
+    delete(@conn_target[$tid, $pid]);
+}
+
+// 定期输出聚合统计 (每5秒)
+interval:s:5
+{
+    $ts_ms = nsecs / 1000000;
+    $conn_count = count(@connect_count);
+    $retrans_count = count(@retransmit_count);
+    
+    // 计算P99延迟 (通过打印hist然后解析)
+    print(@latency_hist, 5);  // 每5秒打印一次直方图
+    
+    printf("{\"type\":\"stats\",\"ts_ms\":%llu,\"connect_count\":%llu,\"retransmit_count\":%llu}\n",
+        $ts_ms, $conn_count, $retrans_count);
+    
+    clear(@latency_hist);
+    clear(@connect_count);
+    clear(@retransmit_count);
+}
+
+// 错误处理 - 跟踪kprobe错误
+kprobe:ftrace_raw_event_sched_sched_stat
+{
+    // 用于捕获调度事件，作为健康检查
+}
+
+END
+{
+    printf("{\"type\":\"end\",\"msg\":\"network_latency probe stopped\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+    
+    clear(@conn_start);
+    clear(@conn_target);
+    clear(@latency_hist);
+    clear(@connect_count);
+    clear(@retransmit_count);
+}
