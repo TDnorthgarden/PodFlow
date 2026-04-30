@@ -5,6 +5,8 @@
 use crate::types::alert::*;
 use crate::types::diagnosis::{Conclusion, DiagnosisResult, DiagnosisStatus};
 use crate::types::evidence::Evidence;
+use crate::types::error::{NutsError, Result};
+use crate::utils::error_handling::{read_rwlock, write_rwlock};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tracing::{debug, info, warn};
@@ -45,7 +47,7 @@ impl AlertRuleEngine {
     }
 
     /// 评估诊断结果，生成告警
-    pub fn evaluate(&self, diagnosis: &DiagnosisResult, evidences: &[Evidence]) -> Vec<AlertEvaluationResult> {
+    pub fn evaluate(&self, diagnosis: &DiagnosisResult, evidences: &[Evidence]) -> Result<Vec<AlertEvaluationResult>> {
         let mut results = Vec::new();
 
         // 获取启用的规则
@@ -62,7 +64,7 @@ impl AlertRuleEngine {
         );
 
         for rule in enabled_rules {
-            match self.evaluate_rule(rule, diagnosis, evidences) {
+            match self.evaluate_rule(rule, diagnosis, evidences)? {
                 AlertEvaluationResult::Firing(alert) => {
                     info!(
                         "Alert firing: {} for task {}",
@@ -84,7 +86,7 @@ impl AlertRuleEngine {
             }
         }
 
-        results
+        Ok(results)
     }
 
     /// 评估单个规则
@@ -93,12 +95,12 @@ impl AlertRuleEngine {
         rule: &AlertRule,
         diagnosis: &DiagnosisResult,
         evidences: &[Evidence],
-    ) -> AlertEvaluationResult {
+    ) -> Result<AlertEvaluationResult> {
         // 检查条件是否满足
         let condition_met = self.evaluate_condition(&rule.condition, diagnosis, evidences);
 
         if !condition_met {
-            return AlertEvaluationResult::NotFiring;
+            return Ok(AlertEvaluationResult::NotFiring);
         }
 
         // 生成去重键
@@ -106,10 +108,10 @@ impl AlertRuleEngine {
 
         // 检查是否已有活跃告警（抑制）
         {
-            let active = self.active_alerts.read().unwrap();
+            let active = read_rwlock(self.active_alerts.read(), "Failed to read active alerts")?;
             if let Some(existing) = active.get(&dedup_key) {
                 if existing.is_in_suppress_window(rule.suppress_window_secs) {
-                    return AlertEvaluationResult::Suppressed(dedup_key);
+                    return Ok(AlertEvaluationResult::Suppressed(dedup_key));
                 }
             }
         }
@@ -119,14 +121,14 @@ impl AlertRuleEngine {
 
         // 添加到活跃告警缓存
         {
-            let mut active = self.active_alerts.write().unwrap();
+            let mut active = write_rwlock(self.active_alerts.write(), "Failed to write active alerts")?;
             active.insert(dedup_key.clone(), alert.clone());
         }
 
         // 添加到历史
-        self.add_to_history(alert.clone());
+        self.add_to_history(alert.clone())?;
 
-        AlertEvaluationResult::Firing(alert)
+        Ok(AlertEvaluationResult::Firing(alert))
     }
 
     /// 评估条件
@@ -360,56 +362,58 @@ impl AlertRuleEngine {
     }
 
     /// 添加到历史
-    fn add_to_history(&self, alert: AlertInstance) {
-        let mut history = self.alert_history.write().unwrap();
+    fn add_to_history(&self, alert: AlertInstance) -> Result<()> {
+        let mut history = write_rwlock(self.alert_history.write(), "Failed to write alert history")?;
         history.push(alert);
         
         // 限制历史大小
         if history.len() > self.max_history_size {
             history.remove(0);
         }
+        
+        Ok(())
     }
 
     /// 获取活跃告警
-    pub fn get_active_alerts(&self) -> Vec<AlertInstance> {
-        let active = self.active_alerts.read().unwrap();
-        active.values().cloned().collect()
+    pub fn get_active_alerts(&self) -> Result<Vec<AlertInstance>> {
+        let active = read_rwlock(self.active_alerts.read(), "Failed to read active alerts")?;
+        Ok(active.values().cloned().collect())
     }
 
     /// 获取告警历史
-    pub fn get_alert_history(&self) -> Vec<AlertInstance> {
-        let history = self.alert_history.read().unwrap();
-        history.clone()
+    pub fn get_alert_history(&self) -> Result<Vec<AlertInstance>> {
+        let history = read_rwlock(self.alert_history.read(), "Failed to read alert history")?;
+        Ok(history.clone())
     }
 
     /// 解决告警
-    pub fn resolve_alert(&self, dedup_key: &str) -> bool {
-        let mut active = self.active_alerts.write().unwrap();
+    pub fn resolve_alert(&self, dedup_key: &str) -> Result<bool> {
+        let mut active = write_rwlock(self.active_alerts.write(), "Failed to write active alerts")?;
         if let Some(alert) = active.get_mut(dedup_key) {
             alert.resolve();
             info!("Alert resolved: {}", dedup_key);
-            true
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 
     /// 确认告警
-    pub fn acknowledge_alert(&self, dedup_key: &str) -> bool {
-        let mut active = self.active_alerts.write().unwrap();
+    pub fn acknowledge_alert(&self, dedup_key: &str) -> Result<bool> {
+        let mut active = write_rwlock(self.active_alerts.write(), "Failed to write active alerts")?;
         if let Some(alert) = active.get_mut(dedup_key) {
             alert.acknowledge();
             info!("Alert acknowledged: {}", dedup_key);
-            true
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 
     /// 清理过期告警
-    pub fn cleanup_expired_alerts(&self, max_age_secs: u64) -> usize {
+    pub fn cleanup_expired_alerts(&self, max_age_secs: u64) -> Result<usize> {
         let now = chrono::Utc::now().timestamp();
-        let mut active = self.active_alerts.write().unwrap();
+        let mut active = write_rwlock(self.active_alerts.write(), "Failed to write active alerts")?;
         let initial_count = active.len();
         
         active.retain(|_, alert| {
@@ -421,7 +425,7 @@ impl AlertRuleEngine {
         if removed > 0 {
             info!("Cleaned up {} expired alerts", removed);
         }
-        removed
+        Ok(removed)
     }
 }
 
@@ -557,7 +561,7 @@ mod tests {
         let diagnosis = create_test_diagnosis();
         let evidences = vec![];
         
-        let results = engine.evaluate(&diagnosis, &evidences);
+        let results = engine.evaluate(&diagnosis, &evidences).expect("Evaluation should succeed");
         
         // 应该触发 CPU 告警
         assert!(!results.is_empty());
@@ -583,7 +587,7 @@ mod tests {
         let diagnosis = create_test_diagnosis();
         let evidences = vec![];
 
-        let results = engine.evaluate(&diagnosis, &evidences);
+        let results = engine.evaluate(&diagnosis, &evidences).expect("Evaluation should succeed");
         
         assert!(results.iter().any(|r| matches!(r, AlertEvaluationResult::Firing(_))));
     }

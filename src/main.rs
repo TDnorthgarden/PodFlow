@@ -17,14 +17,58 @@ use nuts_observer::collector::nri_mapping_v2::NriMappingTableV2;
 use nuts_observer::collector::oom_events::{OomEventListener, OomListenerConfig};
 use nuts_observer::config::{Config, ConfigError};
 use nuts_observer::ai::async_bridge::{start_ai_system, AiWorker, AiWorkerConfig, AiCompletionNotification, AiResultStore};
+use nuts_observer::ai::{AiAdapter, EvidenceCheckConfig};
 use nuts_observer::publisher::ResultPublisher;
+use nuts_observer::types::error::{NutsError, Result};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tracing_subscriber::EnvFilter;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const NAME: &str = env!("CARGO_PKG_NAME");
+const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
+
+fn print_help() {
+    println!("{} {}", NAME, VERSION);
+    println!("{}", DESCRIPTION);
+    println!();
+    println!("Usage: {} [OPTIONS]", NAME);
+    println!();
+    println!("Options:");
+    println!("  -h, --help       Print help information");
+    println!("  -v, --version    Print version information");
+    println!("  -c, --config     Specify config file path");
+    println!();
+    println!("Examples:");
+    println!("  {}                    # Start server with default config", NAME);
+    println!("  {} --help             # Print this help message", NAME);
+    println!("  {} --version          # Print version", NAME);
+}
+
+fn print_version() {
+    println!("{} {}", NAME, VERSION);
+}
+
 #[tokio::main]
 async fn main() {
+    // 解析命令行参数
+    let args: Vec<String> = std::env::args().collect();
+    
+    for arg in &args[1..] {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                print_help();
+                return;
+            }
+            "-v" | "--version" => {
+                print_version();
+                return;
+            }
+            _ => {}
+        }
+    }
+    
     // 服务器模式运行
     run_server().await;
 }
@@ -59,9 +103,13 @@ async fn run_server() {
     let nri_table = Arc::new(NriMappingTable::new());
     
     // 初始化 NRI V3 (优化版本 - 包含DashMap、版本控制、持久化等)
-    let nri_v3 = create_nri_v3()
-        .await
-        .expect("Failed to initialize NRI V3");
+    let nri_v3 = match create_nri_v3().await {
+        Ok(nri) => nri,
+        Err(e) => {
+            tracing::error!("Failed to initialize NRI V3: {}", e);
+            return;
+        }
+    };
     let nri_v3 = Arc::new(nri_v3);
     tracing::info!("NRI mapping table initialized");
 
@@ -159,10 +207,14 @@ async fn run_server() {
         let app_state = Arc::new(AppState::new(Arc::clone(&nri_table)));
         let nri_v3_api_state = Arc::new(NriV3ApiState::new(Arc::clone(&nri_v3)));
         
+        // 创建 AI 适配器（带证据充分性检查配置）
+        let evidence_check_config = EvidenceCheckConfig::default();
+        let ai_adapter = Arc::new(AiAdapter::with_evidence_check(config_read.ai.clone().into(), evidence_check_config));
+
         // 构建路由：触发器 + NRI Webhook + NRI V3增强 + 健康检查 + 诊断查询
         let queue_for_router = Arc::new(queue);
         let mut app = Router::new()
-            .merge(trigger_router(Arc::clone(&nri_table), Some(queue_for_router)))
+            .merge(trigger_router(Arc::clone(&nri_table), Some(queue_for_router), Some(ai_adapter)))
             .merge(nri_router(Arc::clone(&nri_table)))
             .merge(nri_v3_enhanced_router(nri_v3_api_state))
             .merge(health_router(app_state));
@@ -186,7 +238,7 @@ async fn run_server() {
         
         // 构建基础路由（含诊断查询，但 AI 未启用时返回空）
         let mut app = Router::new()
-            .merge(trigger_router(Arc::clone(&nri_table), None))
+            .merge(trigger_router(Arc::clone(&nri_table), None, None))
             .merge(nri_router(Arc::clone(&nri_table)))
             .merge(nri_v3_enhanced_router(nri_v3_api_state))
             .merge(health_router(app_state));
@@ -241,15 +293,21 @@ async fn run_server() {
         }
     });
 
-    let listener = TcpListener::bind(&addr).await.expect("failed to bind");
+    let listener = match TcpListener::bind(&addr).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            tracing::error!("Failed to bind to address {}: {}", addr, e);
+            return;
+        }
+    };
     tracing::info!("[Server] Starting HTTP server on {}. Send SIGHUP to reload config.", addr);
-    axum::serve(listener, app)
-        .await
-        .expect("server failed");
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!("Server failed: {}", e);
+    }
 }
 
 /// 加载配置文件
-fn load_config() -> Result<Config, ConfigError> {
+fn load_config() -> Result<Config> {
     // 尝试从多个路径加载配置文件
     let config_paths = vec![
         "nuts.yaml",
@@ -260,14 +318,14 @@ fn load_config() -> Result<Config, ConfigError> {
     for path in &config_paths {
         if std::path::Path::new(path).exists() {
             tracing::info!("Loading config from: {}", path);
-            return Config::from_file(path);
+            return Config::from_file(path).map_err(|e| NutsError::Config(e.to_string()));
         }
     }
 
     // 如果没有找到配置文件，检查环境变量
     if let Ok(config_path) = std::env::var("NUTS_CONFIG") {
         tracing::info!("Loading config from NUTS_CONFIG: {}", config_path);
-        return Config::from_file(config_path);
+        return Config::from_file(config_path).map_err(|e| NutsError::Config(e.to_string()));
     }
 
     // 返回默认配置
@@ -277,7 +335,10 @@ fn load_config() -> Result<Config, ConfigError> {
 
 /// 解析绑定地址
 fn parse_bind_address(addr: &str) -> std::net::IpAddr {
-    addr.parse().unwrap_or_else(|_| std::net::Ipv4Addr::new(0, 0, 0, 0).into())
+    addr.parse().unwrap_or_else(|e| {
+        tracing::warn!("Failed to parse bind address '{}': {}. Using default 0.0.0.0", addr, e);
+        std::net::Ipv4Addr::new(0, 0, 0, 0).into()
+    })
 }
 
 

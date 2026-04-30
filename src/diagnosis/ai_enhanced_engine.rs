@@ -1,19 +1,21 @@
 //! AI 增强诊断引擎
 //!
-//! 集成 AI 分析到诊断流程，支持异步后台处理
+//! 集成 AI 分析到诊断流程，支持异步后台处理。
+//! 异步处理已统一使用 async_bridge 的 AiTaskQueue，不再维护独立通道。
 
 use crate::ai::{
     AiAdapter, AiAdapterConfig, AiEnhancedDiagnosis, AiFallbackMode,
-    llm_client::{LlmConfig},
+    EvidenceSufficiency, InsufficientReason, EvidenceCheckConfig,
+    async_bridge::{AiTaskQueue, AiTask, AiTaskPriority, AiResultStore},
+    llm_client::LlmConfig,
 };
 use crate::diagnosis::engine::RuleEngine;
-use crate::types::diagnosis::{DiagnosisResult, DiagnosisStatus};
+use crate::types::diagnosis::{DiagnosisResult, DiagnosisStatus, AiStatus};
 use crate::types::evidence::Evidence;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use tokio::sync::mpsc;
-use tokio::time::Duration;
-use tracing::{debug, info, warn};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{info, warn};
 
 /// AI 增强诊断引擎
 pub struct AiEnhancedEngine {
@@ -21,23 +23,12 @@ pub struct AiEnhancedEngine {
     rule_engine: RuleEngine,
     /// AI 适配器
     ai_adapter: Option<AiAdapter>,
-    /// 异步任务发送器
-    ai_task_tx: Option<mpsc::UnboundedSender<AiTask>>,
-    /// 是否启用异步 AI 处理
-    enable_async: bool,
+    /// 统一的异步任务队列（async_bridge）
+    ai_task_queue: Option<Arc<AiTaskQueue>>,
     /// AI 结果存储（异步任务完成后的结果）
-    ai_results: Arc<RwLock<HashMap<String, AiEnhancedDiagnosis>>>,
-}
-
-/// AI 任务（用于异步处理）
-#[derive(Debug, Clone)]
-struct AiTask {
-    /// 任务ID
-    task_id: String,
-    /// 诊断结果
-    diagnosis: DiagnosisResult,
-    /// 证据列表
-    evidences: Vec<Evidence>,
+    ai_results: Arc<AiResultStore>,
+    /// 证据检查配置
+    evidence_check_config: EvidenceCheckConfig,
 }
 
 /// AI 增强诊断配置
@@ -55,6 +46,8 @@ pub struct AiEngineConfig {
     pub worker_threads: usize,
     /// AI 结果 TTL（秒），默认 3600（1小时）
     pub result_ttl_secs: u64,
+    /// 证据检查配置
+    pub evidence_check_config: Option<EvidenceCheckConfig>,
 }
 
 impl Default for AiEngineConfig {
@@ -66,6 +59,7 @@ impl Default for AiEngineConfig {
             enable_async: true,
             worker_threads: 2,
             result_ttl_secs: 3600,
+            evidence_check_config: None,
         }
     }
 }
@@ -73,9 +67,11 @@ impl Default for AiEngineConfig {
 impl AiEnhancedEngine {
     /// 创建新的 AI 增强诊断引擎
     pub fn new(rule_engine: RuleEngine, config: AiEngineConfig) -> Self {
+        let evidence_check_config = config.evidence_check_config.clone().unwrap_or_default();
+
         let ai_adapter = if config.enabled {
             if let Some(ai_config) = config.ai_config {
-                Some(AiAdapter::new(ai_config))
+                Some(AiAdapter::with_evidence_check(ai_config, evidence_check_config.clone()))
             } else {
                 warn!("AI enabled but no config provided");
                 None
@@ -84,25 +80,20 @@ impl AiEnhancedEngine {
             None
         };
 
-        let mut engine = Self {
+        Self {
             rule_engine,
             ai_adapter,
-            ai_task_tx: None,
-            enable_async: config.enable_async,
-            ai_results: Arc::new(RwLock::new(HashMap::new())),
-        };
-
-        // 如果启用异步处理，启动后台工作线程
-        if config.enabled && config.enable_async {
-            engine.start_async_workers(config.worker_threads);
+            ai_task_queue: None,
+            ai_results: Arc::new(AiResultStore::new()),
+            evidence_check_config,
         }
+    }
 
-        // 启动 TTL 清理任务（只要启用 AI 就启动，不限于异步模式）
-        if config.enabled {
-            engine.start_cleanup_worker(config.result_ttl_secs);
-        }
-
-        engine
+    /// 绑定统一的异步任务队列（由外部 async_bridge 管理）
+    pub fn with_task_queue(mut self, queue: Arc<AiTaskQueue>, result_store: Arc<AiResultStore>) -> Self {
+        self.ai_task_queue = Some(queue);
+        self.ai_results = result_store;
+        self
     }
 
     /// 快速创建（从环境变量读取配置）
@@ -137,85 +128,10 @@ impl AiEnhancedEngine {
             enable_async: true,
             worker_threads: 2,
             result_ttl_secs,
+            evidence_check_config: None,
         };
 
         Self::new(rule_engine, config)
-    }
-
-    /// 启动异步 AI 工作线程
-    fn start_async_workers(&mut self, _num_threads: usize) {
-        let (tx, mut rx) = mpsc::unbounded_channel::<AiTask>();
-        self.ai_task_tx = Some(tx);
-
-        // 克隆 AI 适配器和结果存储用于后台任务
-        let ai_adapter = self.ai_adapter.clone();
-        let ai_results = self.ai_results.clone();
-
-        // 启动后台处理任务
-        tokio::spawn(async move {
-            info!("AI async worker started");
-
-            while let Some(task) = rx.recv().await {
-                if let Some(ref adapter) = ai_adapter {
-                    debug!("Processing AI task: {}", task.task_id);
-
-                    // 构建 AI 输入
-                    let ai_input = adapter.build_input(&task.diagnosis, &task.evidences);
-
-                    // 实际调用 AI 分析
-                    info!(
-                        "AI analysis starting for task {} with {} evidences",
-                        task.task_id,
-                        task.evidences.len()
-                    );
-
-                    // 调用 LLM 并存储结果
-                    let start = std::time::Instant::now();
-                    match adapter.call_ai(&ai_input).await {
-                        Ok(ai_output) => {
-                            let processing_ms = start.elapsed().as_millis() as i64;
-                            info!(
-                                "AI analysis completed for task {} in {}ms",
-                                task.task_id, processing_ms
-                            );
-
-                            // 构建增强诊断结果
-                            let enhanced = AiEnhancedDiagnosis {
-                                original: task.diagnosis.clone(),
-                                ai_output: Some(ai_output.clone()),
-                                enhanced: adapter.enhance_diagnosis(&task.diagnosis, &ai_output),
-                                ai_status: crate::types::diagnosis::AiStatus::Ok,
-                                processing_ms,
-                                created_at: std::time::Instant::now(),
-                            };
-
-                            // 存储结果
-                            if let Ok(mut results) = ai_results.write() {
-                                results.insert(task.task_id.clone(), enhanced);
-                                info!("Stored AI result for task {}", task.task_id);
-                            }
-                        }
-                        Err(e) => {
-                            warn!("AI analysis failed for task {}: {}", task.task_id, e);
-                            // 存储失败状态
-                            let enhanced = AiEnhancedDiagnosis {
-                                original: task.diagnosis.clone(),
-                                ai_output: None,
-                                enhanced: adapter.apply_fallback(&task.diagnosis),
-                                ai_status: crate::types::diagnosis::AiStatus::Unavailable,
-                                processing_ms: start.elapsed().as_millis() as i64,
-                                created_at: std::time::Instant::now(),
-                            };
-                            if let Ok(mut results) = ai_results.write() {
-                                results.insert(task.task_id.clone(), enhanced);
-                            }
-                        }
-                    }
-                }
-            }
-
-            info!("AI async worker stopped");
-        });
     }
 
     /// 诊断（同步快速响应 + 可选异步 AI 增强）
@@ -223,199 +139,96 @@ impl AiEnhancedEngine {
         // 1. 基础诊断（快速规则引擎）
         let base_diagnosis = self.rule_engine.diagnose(evidences);
 
-        // 2. 检查是否需要 AI 增强
-        if self.should_ai_enhance(&base_diagnosis) {
-            if self.enable_async && self.ai_task_tx.is_some() {
-                // 异步处理：后台触发 AI 分析
-                self.trigger_async_ai_analysis(&base_diagnosis, evidences);
-                base_diagnosis
-            } else if let Some(ref adapter) = self.ai_adapter {
-                // 同步处理：直接调用 AI（可能较慢）
-                match self.perform_ai_analysis(adapter, &base_diagnosis, evidences).await {
-                    Ok(enhanced) => enhanced,
-                    Err(e) => {
-                        warn!("AI analysis failed: {}, returning base diagnosis", e);
+        // 2. 检查是否需要 AI 增强（证据充分性门控）
+        if let Some(ref adapter) = self.ai_adapter {
+            match adapter.check_evidence_sufficiency(&base_diagnosis, evidences) {
+                EvidenceSufficiency::Sufficient => {
+                    if let Some(ref queue) = self.ai_task_queue {
+                        // 异步处理：通过统一的 async_bridge 队列提交
+                        let max_severity = base_diagnosis.conclusions.iter()
+                            .filter_map(|c| c.severity)
+                            .max()
+                            .unwrap_or(0);
+                        let priority = if max_severity >= 9 {
+                            AiTaskPriority::Critical
+                        } else if max_severity >= 7 {
+                            AiTaskPriority::High
+                        } else {
+                            AiTaskPriority::Normal
+                        };
+
+                        let task = AiTask::new(
+                            base_diagnosis.task_id.clone(),
+                            base_diagnosis.clone(),
+                            evidences.to_vec(),
+                            priority,
+                        );
+
+                        match queue.submit(task).await {
+                            Ok(_) => {
+                                info!(
+                                    "AI analysis queued for task {} (priority={:?})",
+                                    base_diagnosis.task_id, priority
+                                );
+                            }
+                            Err(e) => {
+                                warn!("Failed to submit AI task: {}", e);
+                            }
+                        }
                         base_diagnosis
+                    } else {
+                        // 同步处理：直接调用 AI
+                        match adapter.process(&base_diagnosis, evidences).await {
+                            enhanced_result if enhanced_result.ai_status == AiStatus::Ok => {
+                                enhanced_result.enhanced
+                            }
+                            _ => {
+                                warn!("AI analysis failed or skipped, returning base diagnosis");
+                                base_diagnosis
+                            }
+                        }
                     }
                 }
-            } else {
-                base_diagnosis
+                EvidenceSufficiency::Insufficient(reason) => {
+                    info!(
+                        "AI enhancement skipped for task {}: evidence insufficient ({:?})",
+                        base_diagnosis.task_id, reason
+                    );
+                    base_diagnosis
+                }
             }
         } else {
             base_diagnosis
         }
     }
 
-    /// 判断是否需要 AI 增强
-    fn should_ai_enhance(&self, diagnosis: &DiagnosisResult) -> bool {
-        // 只有异常诊断才需要 AI 增强
-        if !matches!(diagnosis.status, DiagnosisStatus::Done) {
-            return false;
-        }
-
-        // 如果有置信度较低的结论，需要 AI 增强
-        let has_low_confidence = diagnosis.conclusions.iter()
-            .any(|c| c.confidence < 0.7);
-
-        // 如果有结论，就进行 AI 增强
-        !diagnosis.conclusions.is_empty() && has_low_confidence
-    }
-
-    /// 触发异步 AI 分析
-    fn trigger_async_ai_analysis(&self, diagnosis: &DiagnosisResult, evidences: &[Evidence]) {
-        if let Some(ref tx) = self.ai_task_tx {
-            let task = AiTask {
-                task_id: diagnosis.task_id.clone(),
-                diagnosis: diagnosis.clone(),
-                evidences: evidences.to_vec(),
-            };
-
-            if let Err(e) = tx.send(task) {
-                warn!("Failed to send AI task: {}", e);
-            } else {
-                info!("AI analysis queued for task {}", diagnosis.task_id);
-            }
-        }
-    }
-
-    /// 执行 AI 分析（同步）
-    async fn perform_ai_analysis(
-        &self,
-        adapter: &AiAdapter,
-        diagnosis: &DiagnosisResult,
-        evidences: &[Evidence],
-    ) -> Result<DiagnosisResult, String> {
-        info!("Performing AI analysis for task {}", diagnosis.task_id);
-
-        let start = std::time::Instant::now();
-
-        // 构建 AI 输入
-        let ai_input = adapter.build_input(diagnosis, evidences);
-
-        // 调用 AI 适配器处理
-        // 这里简化处理，实际应该调用 adapter.process()
-        // 由于当前适配器接口不同，这里模拟 AI 增强
-
-        let mut enhanced = diagnosis.clone();
-
-        // 模拟 AI 增强结果
-        if !enhanced.conclusions.is_empty() {
-            // 为第一个结论添加 AI 解释
-            let ai_summary = format!(
-                "AI 分析：基于 {} 个证据，检测到 {} 问题。建议进一步检查相关指标。",
-                evidences.len(),
-                enhanced.conclusions[0].title
-            );
-
-            // 回填到诊断结果（使用 ai 字段）
-            enhanced.ai = Some(crate::types::diagnosis::AiInfo {
-                enabled: true,
-                status: crate::types::diagnosis::AiStatus::Ok,
-                summary: Some(ai_summary),
-                version: Some("nuts-ai-v0.1".to_string()),
-                submitted_at_ms: Some(chrono::Utc::now().timestamp_millis()),
-                completed_at_ms: Some(chrono::Utc::now().timestamp_millis()),
-                processing_duration_ms: Some(start.elapsed().as_millis() as i64),
-            });
-        }
-
-        let elapsed = start.elapsed().as_millis() as i64;
-        info!("AI analysis completed in {} ms for task {}", elapsed, diagnosis.task_id);
-
-        Ok(enhanced)
-    }
-
     /// 获取 AI 增强的诊断（如果已完成）
     pub async fn get_ai_enhanced_diagnosis(&self, task_id: &str) -> Option<AiEnhancedDiagnosis> {
-        // 从存储中查询异步完成的 AI 增强结果
-        if let Ok(results) = self.ai_results.read() {
-            results.get(task_id).cloned()
-        } else {
-            None
-        }
+        self.ai_results.get(task_id).await
     }
 
     /// 列出所有 AI 增强诊断结果
     pub async fn list_ai_diagnoses(&self) -> Vec<(String, AiEnhancedDiagnosis)> {
-        if let Ok(results) = self.ai_results.read() {
-            results.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-        } else {
-            vec![]
-        }
+        self.ai_results.list_all().await
     }
 
     /// 按状态查询 AI 诊断结果
-    pub async fn find_by_status(&self, status: crate::types::diagnosis::AiStatus) -> Vec<(String, AiEnhancedDiagnosis)> {
-        if let Ok(results) = self.ai_results.read() {
-            results
-                .iter()
-                .filter(|(_, v)| v.ai_status == status)
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
-        } else {
-            vec![]
-        }
-    }
-
-    /// 启动 TTL 清理后台任务
-    fn start_cleanup_worker(&self, ttl_secs: u64) {
-        let results = self.ai_results.clone();
-        let interval = std::cmp::max(ttl_secs / 10, 60); // 每 1/10 TTL 或至少 60 秒检查一次
-
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(Duration::from_secs(interval));
-
-            loop {
-                ticker.tick().await;
-
-                let now = std::time::Instant::now();
-                let ttl = Duration::from_secs(ttl_secs);
-
-                if let Ok(mut results) = results.write() {
-                    let before = results.len();
-                    results.retain(|_, v| now.duration_since(v.created_at) < ttl);
-                    let after = results.len();
-                    let cleaned = before - after;
-
-                    if cleaned > 0 {
-                        info!("Cleaned {} expired AI results (TTL: {}s)", cleaned, ttl_secs);
-                    }
-                }
-            }
-        });
-
-        info!("Started AI results cleanup worker (TTL: {}s, interval: {}s)", ttl_secs, interval);
-    }
-
-    /// 手动清理过期结果
-    pub fn cleanup_expired(&self, ttl_secs: u64) -> usize {
-        let now = std::time::Instant::now();
-        let ttl = Duration::from_secs(ttl_secs);
-
-        if let Ok(mut results) = self.ai_results.write() {
-            let before = results.len();
-            results.retain(|_, v| now.duration_since(v.created_at) < ttl);
-            let cleaned = before - results.len();
-            cleaned
-        } else {
-            0
-        }
+    pub async fn find_by_status(&self, status: AiStatus) -> Vec<(String, AiEnhancedDiagnosis)> {
+        self.ai_results.list_all().await
+            .into_iter()
+            .filter(|(_, v)| v.ai_status == status)
+            .collect()
     }
 
     /// 健康检查
     pub async fn health_check(&self) -> AiEngineHealth {
-        let ai_healthy = if let Some(ref adapter) = self.ai_adapter {
-            // 检查 AI 适配器是否可用
-            // 这里简化处理
-            true
-        } else {
-            false
-        };
+        let ai_healthy = self.ai_adapter.is_some();
+        let queue_healthy = self.ai_task_queue.is_some();
 
         AiEngineHealth {
             rule_engine_healthy: true,
             ai_adapter_healthy: ai_healthy,
-            async_queue_healthy: self.ai_task_tx.is_some(),
+            async_queue_healthy: queue_healthy,
         }
     }
 }

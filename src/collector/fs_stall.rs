@@ -1,3 +1,4 @@
+use crate::types::error::NutsError;
 use crate::types::evidence::*;
 use crate::types::evidence::{TopCalls, TopCall};
 use crate::collector::nri_mapping::{AttributionSource, NriMappingTable};
@@ -54,7 +55,7 @@ fn make_evidence_id(task_id: &str, evidence_type: &str, collection_id: &str, sco
 /// 
 /// 最小实现方案：监控文件系统相关系统调用（read/write/open/sync等）的延迟
 /// 与 block_io 证据联动分析，可形成"文件系统卡顿与I/O"的关联结论
-pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Evidence {
+pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Result<Evidence, NutsError> {
     let scope_key = make_scope_key(
         cfg.pod.as_ref().and_then(|p| p.uid.as_deref()),
         cfg.cgroup_id.as_deref(),
@@ -86,7 +87,7 @@ pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Evidence {
     {
         Ok(c) => c,
         Err(e) => {
-            let mut errors_guard = errors.lock().unwrap();
+            let mut errors_guard = errors.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
             errors_guard.push(CollectionError {
                 code: "BPFTRACE_SCRIPT_LOAD_FAILED".into(),
                 message: format!("Failed to start bpftrace: {}", e),
@@ -104,14 +105,14 @@ pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Evidence {
             let errors: Vec<CollectionError> = Arc::try_unwrap(errors)
                 .map(|m| m.into_inner().unwrap_or_default())
                 .unwrap_or_else(|arc| arc.lock().map(|m| m.clone()).unwrap_or_default());
-            return build_evidence(
+            return Ok(build_evidence(
                 cfg, scope_key, collection_id, probe_id,
                 latencies, ops, errors, "failed",
-            );
+            ));
         }
     };
     
-    let stdout = child.stdout.take().expect("Failed to capture stdout");
+    let stdout = child.stdout.take().ok_or_else(|| NutsError::internal("Failed to capture stdout"))?;
     let reader = BufReader::new(stdout);
     
     // 采集超时控制
@@ -124,17 +125,17 @@ pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Evidence {
             break;
         }
         
-        let line = match line {
+        let line_str = match line {
             Ok(l) => l,
             Err(_) => continue,
         };
         
         // 解析 JSON 输出
-        if let Ok(event) = serde_json::from_str::<BpftraceFsEvent>(&line) {
+        if let Ok(event) = serde_json::from_str::<BpftraceFsEvent>(&line_str) {
             match event.event_type.as_str() {
                 "fs_op_complete" => {
                     if let Some(latency) = event.latency_us {
-                        let mut latencies = latencies_clone.lock().unwrap();
+                        let mut latencies = latencies_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                         latencies.push(latency);
                         
                         // 按操作类型分类统计
@@ -142,7 +143,7 @@ pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Evidence {
                             .or_else(|| event.syscall_name.clone())
                             .unwrap_or_else(|| "unknown".to_string());
                         
-                        let mut ops = ops_clone.lock().unwrap();
+                        let mut ops = ops_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                         ops.entry(op_type)
                             .or_insert_with(Vec::new)
                             .push(latency);
@@ -173,10 +174,10 @@ pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Evidence {
     
     let collection_status = if errors.is_empty() { "success" } else { "partial" };
     
-    build_evidence(
+Ok(    build_evidence(
         cfg, scope_key, collection_id, probe_id,
         fs_latencies, fs_ops, errors, collection_status,
-    )
+    ))
 }
 
 fn build_evidence(

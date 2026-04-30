@@ -6,6 +6,7 @@
 //! - 预测性告警（基于趋势预测未来状态）
 //! - 趋势变化点检测
 
+use crate::types::error::NutsError;
 use crate::types::diagnosis::*;
 use crate::types::evidence::Evidence;
 use crate::diagnosis::engine::Rule;
@@ -448,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn test_trend_rule_linear_regression() {
+    fn test_trend_rule_linear_regression() -> Result<(), Box<dyn std::error::Error>> {
         let rule = TrendRule::new(
             "test_trend",
             "cgroup_contention",
@@ -465,11 +466,12 @@ mod tests {
         }
 
         // 验证斜率计算
-        let series = rule.time_series.lock().unwrap();
+        let series = rule.time_series.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
         let points: Vec<_> = series.iter().copied().collect();
         let result = rule.linear_regression(&points).unwrap();
         
         // 斜率应该接近1.0
         assert!(result.0 > 0.8 && result.0 < 1.2, "Slope should be ~1.0, got {}", result.0);
+        Ok(())
     }
 }

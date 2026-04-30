@@ -2,6 +2,7 @@
 //!
 //! 支持多种 LLM 后端：OpenAI, Claude, 本地模型等
 
+use crate::types::error::NutsError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -233,21 +234,20 @@ impl OpenAiClient {
     }
 
     /// 从 API key 快速创建
-    pub fn with_api_key(api_key: &str) -> Self {
+    pub fn with_api_key(api_key: &str) -> Result<Self, LlmError> {
         let config = LlmConfig::for_provider(LlmProvider::OpenAi)
             .with_api_key(api_key);
-        Self::new(config).expect("Failed to create OpenAI client")
+        Self::new(config)
     }
 }
 
 #[async_trait]
 impl LlmClient for OpenAiClient {
     async fn chat_completion(&self, request: ChatCompletionRequest) -> Result<ChatCompletionResponse, LlmError> {
-        if self.config.api_key.is_none() {
-            return Err(LlmError::non_retryable("API_KEY_MISSING", "API key not configured"));
-        }
-
-        let api_key = self.config.api_key.as_ref().unwrap();
+        let api_key = match self.config.api_key.as_ref() {
+            Some(key) => key,
+            None => return Err(LlmError::non_retryable("API_KEY_MISSING", "API key not configured")),
+        };
 
         let request_body = serde_json::json!({
             "model": request.model,
@@ -345,9 +345,9 @@ impl OllamaClient {
     }
 
     /// 快速创建本地 Ollama 客户端
-    pub fn local_default() -> Self {
+    pub fn local_default() -> Result<Self, LlmError> {
         let config = LlmConfig::for_provider(LlmProvider::Local);
-        Self::new(config).expect("Failed to create Ollama client")
+        Self::new(config)
     }
 }
 
@@ -456,10 +456,10 @@ impl AnthropicClient {
     }
 
     /// 快速创建 Claude 客户端
-    pub fn claude(api_key: &str) -> Self {
+    pub fn claude(api_key: &str) -> Result<Self, LlmError> {
         let config = LlmConfig::for_provider(LlmProvider::Anthropic)
             .with_api_key(api_key);
-        Self::new(config).expect("Failed to create Claude client")
+        Self::new(config)
     }
 }
 
@@ -653,10 +653,10 @@ impl LlmClientFactory {
     }
 
     /// 快速创建 OpenAI 客户端
-    pub fn openai(api_key: &str) -> Box<dyn LlmClient> {
+    pub fn openai(api_key: &str) -> Result<Box<dyn LlmClient>, LlmError> {
         let config = LlmConfig::for_provider(LlmProvider::OpenAi)
             .with_api_key(api_key);
-        Box::new(OpenAiClient::new(config).expect("Failed to create OpenAI client"))
+        OpenAiClient::new(config).map(|client| Box::new(client) as Box<dyn LlmClient>)
     }
 }
 

@@ -38,9 +38,13 @@ ProtectClock=true
 ProtectHostname=true
 ProtectProc=invisible
 
-# 允许读写的路径
+# 允许读写的路径（必须在 ProtectSystem 之后定义）
 ReadWritePaths=/run/nuts /tmp
 ReadOnlyPaths=/usr/share/bpftrace /usr/lib/bpftrace
+
+# 确保 /run/nuts 目录存在且可写
+RuntimeDirectory=nuts
+RuntimeDirectoryMode=0755
 
 # 限制 /proc 和 /sys 访问
 ProtectKernelLogs=true

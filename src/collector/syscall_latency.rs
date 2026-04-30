@@ -1,3 +1,4 @@
+use crate::types::error::NutsError;
 use crate::types::evidence::*;
 use crate::types::evidence::{TopCalls, TopCall};
 use crate::collector::nri_mapping::{AttributionSource, NriMappingTable};
@@ -50,7 +51,7 @@ fn make_evidence_id(task_id: &str, evidence_type: &str, collection_id: &str, sco
 }
 
 /// 运行 bpftrace syscall 采集探针
-pub fn run_syscall_collect_poc(cfg: SyscallCollectorConfig) -> Evidence {
+pub fn run_syscall_collect_poc(cfg: SyscallCollectorConfig) -> Result<Evidence, NutsError> {
     let scope_key = make_scope_key(
         cfg.pod.as_ref().and_then(|p| p.uid.as_deref()),
         cfg.cgroup_id.as_deref(),
@@ -80,7 +81,7 @@ pub fn run_syscall_collect_poc(cfg: SyscallCollectorConfig) -> Evidence {
     {
         Ok(c) => c,
         Err(e) => {
-            let mut errors_guard = errors.lock().unwrap();
+            let mut errors_guard = errors.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
             errors_guard.push(CollectionError {
                 code: "BPFTRACE_SCRIPT_LOAD_FAILED".into(),
                 message: format!("Failed to start bpftrace: {}", e),
@@ -95,14 +96,14 @@ pub fn run_syscall_collect_poc(cfg: SyscallCollectorConfig) -> Evidence {
             let errors: Vec<CollectionError> = Arc::try_unwrap(errors)
                 .map(|m| m.into_inner().unwrap_or_default())
                 .unwrap_or_else(|arc| arc.lock().map(|m| m.clone()).unwrap_or_default());
-            return build_evidence(
+            return Ok(build_evidence(
                 cfg, scope_key, collection_id, probe_id,
                 stats, errors, "failed",
-            );
+            ));
         }
     };
     
-    let stdout = child.stdout.take().expect("Failed to capture stdout");
+    let stdout = child.stdout.take().ok_or_else(|| NutsError::internal("Failed to capture stdout"))?;
     let reader = BufReader::new(stdout);
     
     // 采集超时控制
@@ -115,17 +116,17 @@ pub fn run_syscall_collect_poc(cfg: SyscallCollectorConfig) -> Evidence {
             break;
         }
         
-        let line = match line {
+        let line_str = match line {
             Ok(l) => l,
             Err(_) => continue,
         };
-        
+
         // 解析 JSON 输出
-        if let Ok(event) = serde_json::from_str::<BpftraceSyscallEvent>(&line) {
+        if let Ok(event) = serde_json::from_str::<BpftraceSyscallEvent>(&line_str) {
             match event.event_type.as_str() {
                 "syscall_exit" => {
                     if let Some(latency) = event.latency_us {
-                        let mut stats = stats_clone.lock().unwrap();
+                        let mut stats = stats_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                         stats.entry(event.syscall_name.clone())
                             .or_insert_with(Vec::new)
                             .push(latency);
@@ -149,10 +150,10 @@ pub fn run_syscall_collect_poc(cfg: SyscallCollectorConfig) -> Evidence {
     
     let collection_status = if errors.is_empty() { "success" } else { "partial" };
     
-    build_evidence(
+Ok(    build_evidence(
         cfg, scope_key, collection_id, probe_id,
         syscall_stats, errors, collection_status,
-    )
+    ))
 }
 
 fn build_evidence(

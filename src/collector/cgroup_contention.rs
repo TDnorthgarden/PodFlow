@@ -12,7 +12,6 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io;
 use std::path::Path;
 use std::sync::Arc;
 

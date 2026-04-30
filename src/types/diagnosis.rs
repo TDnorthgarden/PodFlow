@@ -133,4 +133,5 @@ pub enum AiStatus {
     Timeout,
     Unavailable,
     Failed,
+    SkippedInsufficientEvidence,
 }

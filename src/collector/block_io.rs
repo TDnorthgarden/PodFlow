@@ -1,5 +1,6 @@
 use crate::types::evidence::*;
 use crate::collector::nri_mapping::{AttributionSource, NriMappingTable};
+use crate::types::error::NutsError;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -53,7 +54,7 @@ fn make_evidence_id(task_id: &str, evidence_type: &str, collection_id: &str, sco
 }
 
 /// 运行真实的 bpftrace block_io 采集（第 1 周 PoC）
-pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Evidence {
+pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Result<Evidence, NutsError> {
     let scope_key = make_scope_key(
         cfg.pod.as_ref().and_then(|p| p.uid.as_deref()),
         cfg.cgroup_id.as_deref(),
@@ -99,7 +100,7 @@ pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Evidence {
     {
         Ok(c) => c,
         Err(e) => {
-            let mut errors_guard = errors.lock().unwrap();
+            let mut errors_guard = errors.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
             errors_guard.push(CollectionError {
                 code: "BPFTRACE_SCRIPT_LOAD_FAILED".into(),
                 message: format!("Failed to start bpftrace: {}", e),
@@ -107,20 +108,41 @@ pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Evidence {
                 detail: None,
             });
             drop(errors_guard);
-            return build_evidence(
+            return Ok(build_evidence(
                 cfg, scope_key, collection_id, probe_id,
-                Arc::try_unwrap(latencies).unwrap().into_inner().unwrap(),
-                *bytes_total.lock().unwrap(),
-                *io_count.lock().unwrap(),
-                *timeout_count.lock().unwrap(),
-                Arc::try_unwrap(events).unwrap().into_inner().unwrap(),
-                Arc::try_unwrap(errors).unwrap().into_inner().unwrap(),
+                match Arc::try_unwrap(latencies) {
+                    Ok(mutex) => match mutex.into_inner() {
+                        Ok(value) => value,
+                        Err(_) => return Err(NutsError::lock_error("Failed to get inner value from mutex")),
+                    },
+                    Err(_) => return Err(NutsError::internal("Failed to unwrap Arc")),
+                },
+                *bytes_total.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?,
+                *io_count.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?,
+                *timeout_count.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?,
+                match Arc::try_unwrap(events) {
+                    Ok(mutex) => match mutex.into_inner() {
+                        Ok(value) => value,
+                        Err(_) => return Err(NutsError::lock_error("Failed to get inner value from mutex")),
+                    },
+                    Err(_) => return Err(NutsError::internal("Failed to unwrap Arc")),
+                },
+                match Arc::try_unwrap(errors) {
+                    Ok(mutex) => match mutex.into_inner() {
+                        Ok(value) => value,
+                        Err(_) => return Err(NutsError::lock_error("Failed to get inner value from mutex")),
+                    },
+                    Err(_) => return Err(NutsError::internal("Failed to unwrap Arc")),
+                },
                 "failed",
-            );
+            ));
         }
     };
     
-    let stdout = child.stdout.take().expect("Failed to capture stdout");
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => return Err(NutsError::internal("Failed to capture stdout from bpftrace process")),
+    };
     let reader = BufReader::new(stdout);
     
     // 采集超时控制
@@ -133,34 +155,34 @@ pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Evidence {
             break;
         }
         
-        let line = match line {
+        let line_str = match line {
             Ok(l) => l,
             Err(_) => continue,
         };
         
         // 解析 JSON 输出
-        if let Ok(event) = serde_json::from_str::<BpftraceBlockIoEvent>(&line) {
+        if let Ok(event) = serde_json::from_str::<BpftraceBlockIoEvent>(&line_str) {
             match event.event_type.as_str() {
                 "io_complete" => {
                     if let Some(latency) = event.latency_us {
-                        let mut latencies = latencies_clone.lock().unwrap();
+                        let mut latencies = latencies_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                         latencies.push(latency);
                     }
                     if let Some(b) = event.bytes {
-                        let mut bytes_total = bytes_total.lock().unwrap();
+                        let mut bytes_total = bytes_total.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                         *bytes_total += b;
                     }
                     {
-                        let mut io_count = io_count.lock().unwrap();
+                        let mut io_count = io_count.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                         *io_count += 1;
                     }
-                    let mut events = events_clone.lock().unwrap();
+                    let mut events = events_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                     events.push(event);
                 }
                 "io_timeout" => {
-                    let mut timeout_count = timeout_count.lock().unwrap();
+                    let mut timeout_count = timeout_count.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                     *timeout_count += 1;
-                    let mut events = events_clone.lock().unwrap();
+                    let mut events = events_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                     events.push(event);
                 }
                 _ => {}
@@ -193,10 +215,10 @@ pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Evidence {
     
     let collection_status = if errors.is_empty() { "success" } else { "partial" };
     
-    build_evidence(
+    Ok(build_evidence(
         cfg, scope_key, collection_id, probe_id,
         latencies, bytes_total, io_count, timeout_count, events, errors, collection_status,
-    )
+    ))
 }
 
 fn build_evidence(

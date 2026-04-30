@@ -7,6 +7,7 @@ use crate::collector::nri_mapping::NriMappingTable;
 use crate::diagnosis::engine::RuleEngine;
 use crate::publisher::ResultPublisher;
 use crate::types::evidence::{PodInfo, TimeWindow, Evidence};
+use crate::types::error::NutsError;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -173,7 +174,7 @@ impl ConditionTrigger {
                         nri_table: self.nri_table.clone(),
                         target_pids: None,
                     };
-                    let evidence = run_network_collect_poc(network_cfg);
+                    let evidence = run_network_collect_poc(network_cfg)?;
                     evidences.push(evidence);
                 }
                 "block_io" => {
@@ -192,7 +193,7 @@ impl ConditionTrigger {
                         nri_table: self.nri_table.clone(),
                         target_pids: None,
                     };
-                    let evidence = run_block_io_collect_poc(block_io_cfg);
+                    let evidence = run_block_io_collect_poc(block_io_cfg)?;
                     evidences.push(evidence);
                 }
                 "syscall_latency" => {
@@ -206,7 +207,7 @@ impl ConditionTrigger {
                         requested_events: vec!["syscall_latency_spike".into()],
                         nri_table: self.nri_table.clone(),
                     };
-                    let evidence = run_syscall_collect_poc(syscall_cfg);
+                    let evidence = run_syscall_collect_poc(syscall_cfg)?;
                     evidences.push(evidence);
                 }
                 "fs_stall" => {
@@ -223,7 +224,7 @@ impl ConditionTrigger {
                         requested_events: vec!["fs_stall_spike".into()],
                         nri_table: self.nri_table.clone(),
                     };
-                    let evidence = run_fs_stall_collect_poc(fs_stall_cfg);
+                    let evidence = run_fs_stall_collect_poc(fs_stall_cfg)?;
                     evidences.push(evidence);
                 }
                 "cgroup_contention" => {
@@ -369,6 +370,24 @@ impl std::fmt::Display for TriggerError {
 }
 
 impl std::error::Error for TriggerError {}
+
+impl From<NutsError> for TriggerError {
+    fn from(err: NutsError) -> Self {
+        TriggerError::CollectionFailed(err.to_string())
+    }
+}
+
+impl axum::response::IntoResponse for TriggerError {
+    fn into_response(self) -> axum::response::Response {
+        let (status, message) = match self {
+            TriggerError::LockError => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Failed to acquire lock".to_string()),
+            TriggerError::CollectionFailed(msg) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Collection failed: {}", msg)),
+            TriggerError::PublishFailed(msg) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Publish failed: {}", msg)),
+        };
+        
+        (status, message).into_response()
+    }
+}
 
 /// 从字符串解析阈值表达式
 /// 格式: "<evidence_type>.<metric_name> <operator> <value>"

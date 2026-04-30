@@ -11,9 +11,10 @@
 //! ```rust
 //! let nri = NriV3::new(NriV3Config::default())
 //!     .await
-//!     .expect("Failed to initialize NRI V3");
+//!     .map_err(|e| NutsError::internal(format!("{}: {}", "Failed to initialize NRI V3", e)))?;
 //! ```
 
+use crate::types::error::NutsError;
 use std::sync::Arc;
 
 use super::nri_mapping::NriEvent;
@@ -403,14 +404,14 @@ mod tests {
     use crate::collector::nri_mapping::{NriContainerInfo, NriPodEvent};
 
     #[tokio::test]
-    async fn test_nri_v3_creation() {
+    async fn test_nri_v3_creation() -> Result<(), Box<dyn std::error::Error>> {
         let config = NriV3Config {
             enable_persistence: false, // 测试时禁用持久化
             enable_metrics: true,
             ..Default::default()
         };
 
-        let nri = NriV3::new(config).await.expect("Failed to create NRI V3");
+        let nri = NriV3::new(config).await.map_err(|e| NutsError::internal(&format!("{}: {}", "Failed to create NRI V3", e)))?;
 
         // 提交事件
         let event = NriEvent::AddOrUpdate(NriPodEvent {
@@ -424,7 +425,7 @@ mod tests {
             }],
         });
 
-        nri.submit_event(event).await.expect("Failed to submit event");
+        nri.submit_event(event).await.map_err(|e| NutsError::internal(&format!("{}: {}", "Failed to submit event", e)))?;
         
         // 等待处理
         nri.flush().await;
@@ -438,6 +439,7 @@ mod tests {
 
         // 关闭
         nri.shutdown().await;
+        Ok(())
     }
 
     #[test]

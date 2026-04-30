@@ -57,12 +57,71 @@ pub enum AiFallbackMode {
     ReduceConfidence,
     /// 标记为待人工审核
     MarkForReview,
+    /// 证据不足时跳过 AI，不做无意义调用
+    SkipAi,
+}
+
+/// 证据充分性评估结果
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EvidenceSufficiency {
+    /// 证据充分，可以调用 AI
+    Sufficient,
+    /// 证据不足，不建议调用 AI
+    Insufficient(InsufficientReason),
+}
+
+/// 证据不足的原因
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InsufficientReason {
+    /// 没有任何证据
+    EmptyEvidences,
+    /// 所有证据都无有效指标和事件
+    NoValidMetrics,
+    /// 有效指标数量不足，无法支撑有意义的 AI 分析
+    InsufficientMetrics,
+    /// 证据条数不足，信息量不够
+    InsufficientEvidenceCount,
+    /// 规则引擎未产出任何结论，AI 缺乏分析基础
+    NoConclusions,
+    /// 结论置信度均足够高，无需 AI 增强
+    HighConfidenceConclusions,
+}
+
+/// 证据充分性检查配置
+#[derive(Debug, Clone)]
+pub struct EvidenceCheckConfig {
+    /// 证据条数下限：低于此数量认为信息量不足
+    pub min_evidence_count: usize,
+    /// 指标摘要中至少需要多少个有效（非零）指标
+    pub min_valid_metrics: usize,
+    /// 事件拓扑中至少需要多少个事件
+    pub min_events: usize,
+    /// 指标值意义性阈值：低于此绝对值的指标视为无意义（如 0.001ms 的延迟）
+    pub metric_significance_threshold: f64,
+    /// 有意义指标至少需要多少个才认为证据充分
+    pub min_significant_metrics: usize,
+    /// 低于此置信度才需要 AI 增强
+    pub confidence_threshold: f64,
+}
+
+impl Default for EvidenceCheckConfig {
+    fn default() -> Self {
+        Self {
+            min_evidence_count: 1,
+            min_valid_metrics: 2,
+            min_events: 1,
+            metric_significance_threshold: 0.01,
+            min_significant_metrics: 1,
+            confidence_threshold: 0.7,
+        }
+    }
 }
 
 /// AI 适配器
 #[derive(Clone)]
 pub struct AiAdapter {
     config: AiAdapterConfig,
+    evidence_check_config: EvidenceCheckConfig,
 }
 
 /// AI 输入（提示词上下文）
@@ -172,23 +231,190 @@ pub struct AiEnhancedDiagnosis {
 impl AiAdapter {
     /// 创建新的 AI 适配器
     pub fn new(config: AiAdapterConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            evidence_check_config: EvidenceCheckConfig::default(),
+        }
+    }
+
+    /// 创建带证据检查配置的 AI 适配器
+    pub fn with_evidence_check(config: AiAdapterConfig, evidence_check: EvidenceCheckConfig) -> Self {
+        Self {
+            config,
+            evidence_check_config: evidence_check,
+        }
+    }
+
+    /// 评估证据充分性
+    ///
+    /// 在调用 AI 前检查证据是否足够支撑有意义的分析，
+    /// 避免在证据不足时浪费 AI 资源或产生无根据的建议。
+    pub fn check_evidence_sufficiency(
+        &self,
+        diagnosis: &DiagnosisResult,
+        evidences: &[Evidence],
+    ) -> EvidenceSufficiency {
+        // 1. 证据为空
+        if evidences.is_empty() {
+            return EvidenceSufficiency::Insufficient(InsufficientReason::EmptyEvidences);
+        }
+
+        // 2. 证据条数不足
+        if evidences.len() < self.evidence_check_config.min_evidence_count {
+            return EvidenceSufficiency::Insufficient(InsufficientReason::InsufficientEvidenceCount);
+        }
+
+        // 3. 检查是否有有效指标或事件（排除全空证据）
+        let has_valid_evidence = evidences.iter().any(|e| {
+            let valid_metrics = e.metric_summary.values().filter(|v| **v != 0.0).count();
+            let valid_events = e.events_topology.len();
+            valid_metrics >= self.evidence_check_config.min_valid_metrics
+                || valid_events >= self.evidence_check_config.min_events
+        });
+        if !has_valid_evidence {
+            return EvidenceSufficiency::Insufficient(InsufficientReason::NoValidMetrics);
+        }
+
+        // 4. 检查有意义的指标数量（绝对值过小的指标不具备分析价值）
+        let significant_metric_count: usize = evidences.iter()
+            .map(|e| {
+                e.metric_summary.values()
+                    .filter(|v| v.abs() >= self.evidence_check_config.metric_significance_threshold)
+                    .count()
+            })
+            .sum();
+        if significant_metric_count < self.evidence_check_config.min_significant_metrics {
+            return EvidenceSufficiency::Insufficient(InsufficientReason::InsufficientMetrics);
+        }
+
+        // 5. 无结论时 AI 缺乏分析基础
+        if diagnosis.conclusions.is_empty() {
+            return EvidenceSufficiency::Insufficient(InsufficientReason::NoConclusions);
+        }
+
+        // 6. 所有结论置信度都足够高，无需 AI 增强
+        let all_high_confidence = diagnosis.conclusions.iter()
+            .all(|c| c.confidence >= self.evidence_check_config.confidence_threshold);
+        if all_high_confidence {
+            return EvidenceSufficiency::Insufficient(InsufficientReason::HighConfidenceConclusions);
+        }
+
+        EvidenceSufficiency::Sufficient
+    }
+
+    /// 对证据做摘要，避免全量序列化导致 token 过长
+    ///
+    /// 当证据数量超过阈值时，只保留关键指标和 Top-N 事件
+    pub fn summarize_evidences(&self, evidences: &[Evidence], max_evidences: usize, max_events_per_evidence: usize) -> Vec<Evidence> {
+        if evidences.len() <= max_evidences {
+            // 数量未超限，但仍需裁剪每个证据的事件数
+            return evidences.iter().map(|e| {
+                let mut summarized = e.clone();
+                if summarized.events_topology.len() > max_events_per_evidence {
+                    summarized.events_topology.truncate(max_events_per_evidence);
+                }
+                summarized
+            }).collect();
+        }
+
+        // 超限时：优先保留有有效指标的证据，其次按事件数量排序
+        let mut indexed: Vec<(usize, usize, usize)> = evidences.iter().enumerate().map(|(i, e)| {
+            let metric_count = e.metric_summary.values().filter(|v| **v != 0.0).count();
+            let event_count = e.events_topology.len();
+            (i, metric_count, event_count)
+        }).collect();
+
+        // 按有效指标数降序，再按事件数降序
+        indexed.sort_by(|a, b| {
+            b.1.cmp(&a.1).then_with(|| b.2.cmp(&a.2))
+        });
+
+        indexed.into_iter()
+            .take(max_evidences)
+            .map(|(i, _, _)| {
+                let mut e = evidences[i].clone();
+                if e.events_topology.len() > max_events_per_evidence {
+                    e.events_topology.truncate(max_events_per_evidence);
+                }
+                e
+            })
+            .collect()
+    }
+
+    /// 解析 AI 输出，支持多种格式的容错提取
+    ///
+    /// 优先尝试直接解析 JSON，失败后尝试从 markdown 代码块中提取 JSON
+    fn parse_ai_output(&self, content: &str) -> Result<AiOutput, AiError> {
+        // 1. 直接解析 JSON
+        if let Ok(output) = serde_json::from_str::<AiOutput>(content) {
+            return Ok(output);
+        }
+
+        // 2. 从 markdown 代码块中提取 JSON（如 ```json ... ```）
+        let trimmed = content.trim();
+        if let Some(json_str) = Self::extract_json_from_code_block(trimmed) {
+            if let Ok(output) = serde_json::from_str::<AiOutput>(&json_str) {
+                return Ok(output);
+            }
+        }
+
+        // 3. 尝试找到内容中第一个 { 到最后一个 } 之间的 JSON
+        if let Some(start) = content.find('{') {
+            if let Some(end) = content.rfind('}') {
+                if start < end {
+                    let json_candidate = &content[start..=end];
+                    if let Ok(output) = serde_json::from_str::<AiOutput>(json_candidate) {
+                        return Ok(output);
+                    }
+                }
+            }
+        }
+
+        Err(AiError::InvalidResponse(format!(
+            "AI response is not valid JSON (attempted direct parse, code block extraction, and brace matching). Raw content (first 500 chars): {}",
+            &content[..content.len().min(500)]
+        )))
+    }
+
+    /// 从 markdown 代码块中提取 JSON 内容
+    fn extract_json_from_code_block(content: &str) -> Option<String> {
+        // 匹配 ```json ... ``` 或 ``` ... ```
+        let patterns = ["```json", "```JSON", "```"];
+        for pattern in patterns {
+            if let Some(start_idx) = content.find(pattern) {
+                let json_start = start_idx + pattern.len();
+                // 跳过开头的换行
+                let json_start = content[json_start..]
+                    .find(|c: char| !c.is_whitespace())
+                    .map(|i| json_start + i)
+                    .unwrap_or(json_start);
+
+                if let Some(end_idx) = content[json_start..].find("```") {
+                    return Some(content[json_start..json_start + end_idx].trim().to_string());
+                }
+            }
+        }
+        None
     }
 
     /// 构建 AI 输入（提示词工程）
-    /// 
-    /// 将证据和诊断结果转换为 AI 可理解的结构化提示词
+    ///
+    /// 将证据和诊断结果转换为 AI 可理解的结构化提示词。
+    /// 证据数量过多时会自动做摘要，避免 token 超限。
     pub fn build_input(&self, diagnosis: &DiagnosisResult, evidences: &[Evidence]) -> AiInput {
-        let system_prompt = self.build_system_prompt();
-        let user_prompt = self.build_user_prompt(diagnosis, evidences);
+        // 对证据做摘要（最多 10 条证据，每条最多 20 个事件）
+        let summarized_evidences = self.summarize_evidences(evidences, 10, 20);
 
-        let evidence_context = serde_json::to_value(evidences)
+        let system_prompt = self.build_system_prompt();
+        let user_prompt = self.build_user_prompt(diagnosis, &summarized_evidences);
+
+        let evidence_context = serde_json::to_value(&summarized_evidences)
             .unwrap_or_else(|_| json!({"error": "serialization failed"}));
-        
+
         let diagnosis_context = serde_json::to_value(diagnosis)
             .unwrap_or_else(|_| json!({"error": "serialization failed"}));
 
-        let evidence_types: Vec<String> = evidences
+        let evidence_types: Vec<String> = summarized_evidences
             .iter()
             .map(|e| e.evidence_type.clone())
             .collect();
@@ -385,12 +611,8 @@ impl AiAdapter {
             })
             .ok_or_else(|| AiError::InvalidResponse("Empty response from AI".to_string()))?;
 
-        // 解析 JSON 格式的 AI 输出
-        let ai_output: AiOutput = serde_json::from_str(&content)
-            .map_err(|e| AiError::InvalidResponse(format!(
-                "AI response is not valid JSON: {}. Raw content: {}",
-                e, content
-            )))?;
+        // 解析 JSON 格式的 AI 输出（带容错：尝试从 markdown 代码块中提取）
+        let ai_output: AiOutput = self.parse_ai_output(&content)?;
 
         tracing::info!(
             "AI call successful for task {} (confidence: {})",
@@ -445,11 +667,31 @@ impl AiAdapter {
     }
 
     /// 处理诊断（带 AI 增强）
-    /// 
+    ///
     /// 完整的 AI 增强流程：
-    /// 1. 构建输入 -> 2. 调用 AI -> 3. 合并结果 -> 4. 返回增强结果
+    /// 1. 证据充分性检查 -> 2. 构建输入 -> 3. 调用 AI -> 4. 合并结果 -> 5. 返回增强结果
     pub async fn process(&self, diagnosis: &DiagnosisResult, evidences: &[Evidence]) -> AiEnhancedDiagnosis {
         let start = chrono::Utc::now().timestamp_millis();
+
+        // 证据充分性门控：证据不足时直接降级，不浪费 AI 资源
+        match self.check_evidence_sufficiency(diagnosis, evidences) {
+            EvidenceSufficiency::Sufficient => {}
+            EvidenceSufficiency::Insufficient(ref reason) => {
+                tracing::info!(
+                    "[AI] Skipping AI enhancement for task {}: evidence insufficient ({:?})",
+                    diagnosis.task_id, reason
+                );
+                let processing_ms = chrono::Utc::now().timestamp_millis() - start;
+                return AiEnhancedDiagnosis {
+                    original: diagnosis.clone(),
+                    ai_output: None,
+                    enhanced: diagnosis.clone(),
+                    ai_status: AiStatus::SkippedInsufficientEvidence,
+                    processing_ms,
+                    created_at: std::time::Instant::now(),
+                };
+            }
+        }
 
         // 构建输入
         let input = self.build_input(diagnosis, evidences);
@@ -460,7 +702,7 @@ impl AiAdapter {
                 // 成功：合并结果
                 let enhanced = self.enhance_diagnosis(diagnosis, &ai_output);
                 let processing_ms = chrono::Utc::now().timestamp_millis() - start;
-                
+
                 AiEnhancedDiagnosis {
                     original: diagnosis.clone(),
                     ai_output: Some(ai_output),
@@ -474,7 +716,7 @@ impl AiAdapter {
                 // 失败：降级处理
                 let enhanced = self.apply_fallback(diagnosis);
                 let processing_ms = chrono::Utc::now().timestamp_millis() - start;
-                
+
                 AiEnhancedDiagnosis {
                     original: diagnosis.clone(),
                     ai_output: None,
@@ -502,8 +744,33 @@ impl AiAdapter {
                 }
             }
             AiFallbackMode::MarkForReview => {
-                // 添加标记到 traceability
-                // 实际实现可以添加一个标记字段
+                // 标记所有结论为待人工审核
+                for conclusion in &mut fallback.conclusions {
+                    if let Some(ref mut details) = conclusion.details {
+                        if let Some(obj) = details.as_object_mut() {
+                            obj.insert("requires_manual_review".to_string(), serde_json::json!(true));
+                            obj.insert("review_reason".to_string(), serde_json::json!("AI enhancement unavailable"));
+                        }
+                    } else {
+                        conclusion.details = Some(serde_json::json!({
+                            "requires_manual_review": true,
+                            "review_reason": "AI enhancement unavailable"
+                        }));
+                    }
+                }
+                // 在 ai 字段中标记
+                fallback.ai = Some(crate::types::diagnosis::AiInfo {
+                    enabled: true,
+                    status: crate::types::diagnosis::AiStatus::Failed,
+                    summary: Some("AI enhancement unavailable, marked for manual review".to_string()),
+                    version: None,
+                    submitted_at_ms: None,
+                    completed_at_ms: None,
+                    processing_duration_ms: None,
+                });
+            }
+            AiFallbackMode::SkipAi => {
+                // 不调用 AI，直接返回原始结果（在 process() 中已提前处理）
             }
         }
 

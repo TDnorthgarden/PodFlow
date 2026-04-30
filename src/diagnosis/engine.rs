@@ -406,7 +406,7 @@ impl RuleEngine {
         }
 
         // 按置信度排序
-        conclusions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        conclusions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
         recommendations.sort_by(|a, b| a.priority.cmp(&b.priority));
 
         // 构建可追溯性

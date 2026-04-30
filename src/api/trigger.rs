@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::ai::async_bridge::{AiTaskQueue, AiTask, AiTaskPriority};
+use crate::ai::{AiAdapter, EvidenceSufficiency};
 use crate::collector::block_io::{run_block_io_collect_poc, BlockIoCollectorConfig};
 use crate::collector::cgroup_contention::{run_cgroup_contention_collect_poc, CgroupContentionConfig};
 use crate::collector::network::{run_network_collect_poc, NetworkCollectorConfig};
@@ -13,6 +14,8 @@ use crate::diagnosis::engine::RuleEngine;
 use crate::publisher::ResultPublisher;
 use crate::types::diagnosis::{DiagnosisResult, Conclusion, EvidenceStrength, DiagnosisStatus, Traceability};
 use crate::types::evidence::{NetworkTarget, PodInfo, TimeWindow, Evidence};
+use crate::types::error::NutsError;
+use crate::api::condition::TriggerError;
 use serde_json::json;
 
 #[derive(Debug, Deserialize)]
@@ -51,19 +54,19 @@ pub struct CollectionOptions {
 }
 
 /// 创建触发器路由
-/// 
+///
 /// 需要传入共享的 NriMappingTable 用于证据采集
-/// 可选传入 AI 任务队列用于异步 AI 增强
-pub fn router(nri_table: Arc<NriMappingTable>, ai_queue: Option<Arc<AiTaskQueue>>) -> Router {
+/// 可选传入 AI 任务队列和 AI 适配器用于异步 AI 增强
+pub fn router(nri_table: Arc<NriMappingTable>, ai_queue: Option<Arc<AiTaskQueue>>, ai_adapter: Option<Arc<AiAdapter>>) -> Router {
     Router::new()
         .route("/v1/diagnostics:trigger", post(trigger_handler))
-        .with_state((nri_table, ai_queue))
+        .with_state((nri_table, ai_queue, ai_adapter))
 }
 
 async fn trigger_handler(
-    State((nri_table, ai_queue)): State<(Arc<NriMappingTable>, Option<Arc<AiTaskQueue>>)>,
+    State((nri_table, ai_queue, ai_adapter)): State<(Arc<NriMappingTable>, Option<Arc<AiTaskQueue>>, Option<Arc<AiAdapter>>)>,
     Json(req): Json<TriggerRequest>
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, TriggerError> {
     let task_id = uuid::Uuid::new_v4().to_string();
     let start_time = chrono::Utc::now().timestamp_millis();
 
@@ -101,7 +104,7 @@ async fn trigger_handler(
             target_pids: req.collection_options.as_ref().and_then(|o| o.target_pids.clone()),
         };
 
-        let evidence = run_network_collect_poc(network_cfg);
+        let evidence = run_network_collect_poc(network_cfg)?;
         evidences.push(evidence);
     }
 
@@ -127,7 +130,7 @@ async fn trigger_handler(
             target_pids: req.collection_options.as_ref().and_then(|o| o.target_pids.clone()),
         };
 
-        let evidence = run_block_io_collect_poc(block_io_cfg);
+        let evidence = run_block_io_collect_poc(block_io_cfg)?;
         evidences.push(evidence);
     }
 
@@ -152,7 +155,7 @@ async fn trigger_handler(
             nri_table: nri_table.clone(),
         };
 
-        let evidence = run_syscall_collect_poc(syscall_cfg);
+        let evidence = run_syscall_collect_poc(syscall_cfg)?;
         evidences.push(evidence);
     }
 
@@ -177,7 +180,7 @@ async fn trigger_handler(
             nri_table: nri_table.clone(),
         };
 
-        let evidence = run_fs_stall_collect_poc(fs_stall_cfg);
+        let evidence = run_fs_stall_collect_poc(fs_stall_cfg)?;
         evidences.push(evidence);
     }
 
@@ -224,33 +227,75 @@ async fn trigger_handler(
     }
     let _payload = publisher.generate_alert_payload(&diagnosis);
 
-    // 提交 AI 增强任务（异步处理）
-    if let Some(ref queue) = ai_queue {
-        let ai_task = AiTask::new(
-            task_id.clone(),
-            diagnosis.clone(),
-            evidences.clone(),
-            AiTaskPriority::Normal,
-        );
-        match queue.submit(ai_task).await {
-            Ok(_) => tracing::info!("[Trigger] AI enhancement task submitted: {}", task_id),
-            Err(e) => tracing::warn!("[Trigger] Failed to submit AI task: {}", e),
+    // 提交 AI 增强任务（异步处理，带证据充分性门控）
+    let ai_skip_reason = if let Some(ref queue) = ai_queue {
+        // 先做证据充分性检查
+        if let Some(ref adapter) = ai_adapter {
+            match adapter.check_evidence_sufficiency(&diagnosis, &evidences) {
+                EvidenceSufficiency::Sufficient => {
+                    // 根据严重程度决定优先级
+                    let max_severity = diagnosis.conclusions.iter()
+                        .filter_map(|c| c.severity)
+                        .max()
+                        .unwrap_or(0);
+                    let priority = if max_severity >= 9 {
+                        AiTaskPriority::Critical
+                    } else if max_severity >= 7 {
+                        AiTaskPriority::High
+                    } else {
+                        AiTaskPriority::Normal
+                    };
+
+                    let ai_task = AiTask::new(
+                        task_id.clone(),
+                        diagnosis.clone(),
+                        evidences.clone(),
+                        priority,
+                    );
+                    match queue.submit(ai_task).await {
+                        Ok(_) => {
+                            tracing::info!("[Trigger] AI enhancement task submitted: {} (priority={:?})", task_id, priority);
+                            None
+                        }
+                        Err(e) => {
+                            tracing::warn!("[Trigger] Failed to submit AI task: {}", e);
+                            Some(format!("queue_submit_failed: {}", e))
+                        }
+                    }
+                }
+                EvidenceSufficiency::Insufficient(reason) => {
+                    tracing::info!(
+                        "[Trigger] AI enhancement skipped for task {}: evidence insufficient ({:?})",
+                        task_id, reason
+                    );
+                    Some(format!("evidence_insufficient: {:?}", reason))
+                }
+            }
+        } else {
+            tracing::debug!("[Trigger] AI enhancement skipped (adapter not available)");
+            Some("no_adapter".to_string())
         }
     } else {
         tracing::debug!("[Trigger] AI enhancement skipped (queue not available)");
-    }
+        Some("no_queue".to_string())
+    };
 
     let end_time = chrono::Utc::now().timestamp_millis();
     let duration_ms = end_time - start_time;
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "task_id": task_id,
         "status": "done",
         "duration_ms": duration_ms,
         "evidence_count": evidences.len(),
         "conclusion_count": diagnosis.conclusions.len(),
+        "ai_enhancement": if let Some(ref reason) = ai_skip_reason {
+            serde_json::json!({"submitted": false, "reason": reason})
+        } else {
+            serde_json::json!({"submitted": true})
+        },
         "diagnosis_preview": diagnosis,
-    }))
+    })))
 }
 
 fn extract_string_list(

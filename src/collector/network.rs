@@ -1,3 +1,4 @@
+use crate::types::error::NutsError;
 use crate::types::evidence::*;
 use crate::collector::nri_mapping::{AttributionSource, NriMappingTable};
 use serde::Deserialize;
@@ -51,7 +52,7 @@ struct BpftraceNetworkEvent {
 }
 
 /// 运行真实的 bpftrace network 采集（第 1 周 PoC）
-pub fn run_network_collect_poc(cfg: NetworkCollectorConfig) -> Evidence {
+pub fn run_network_collect_poc(cfg: NetworkCollectorConfig) -> Result<Evidence, NutsError> {
     let scope_key = make_scope_key(
         cfg.pod.as_ref().and_then(|p| p.uid.as_deref()),
         cfg.cgroup_id.as_deref(),
@@ -94,7 +95,7 @@ pub fn run_network_collect_poc(cfg: NetworkCollectorConfig) -> Evidence {
     {
         Ok(c) => c,
         Err(e) => {
-            let mut errors_guard = errors.lock().unwrap();
+            let mut errors_guard = errors.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
             errors_guard.push(CollectionError {
                 code: "BPFTRACE_SCRIPT_LOAD_FAILED".into(),
                 message: format!("Failed to start bpftrace: {}", e),
@@ -102,17 +103,38 @@ pub fn run_network_collect_poc(cfg: NetworkCollectorConfig) -> Evidence {
                 detail: None,
             });
             drop(errors_guard);
-            return build_evidence(
-                cfg, scope_key, collection_id, probe_id, 
-                Arc::try_unwrap(latencies).unwrap().into_inner().unwrap(), 
-                Arc::try_unwrap(events).unwrap().into_inner().unwrap(),
-                Arc::try_unwrap(errors).unwrap().into_inner().unwrap(),
+            return Ok(build_evidence(
+                cfg, scope_key, collection_id, probe_id,
+                match Arc::try_unwrap(latencies) {
+                    Ok(mutex) => match mutex.into_inner() {
+                        Ok(value) => value,
+                        Err(_) => return Err(NutsError::lock_error("Failed to get inner value from mutex")),
+                    },
+                    Err(_) => return Err(NutsError::internal("Failed to unwrap Arc")),
+                },
+                match Arc::try_unwrap(events) {
+                    Ok(mutex) => match mutex.into_inner() {
+                        Ok(value) => value,
+                        Err(_) => return Err(NutsError::lock_error("Failed to get inner value from mutex")),
+                    },
+                    Err(_) => return Err(NutsError::internal("Failed to unwrap Arc")),
+                },
+                match Arc::try_unwrap(errors) {
+                    Ok(mutex) => match mutex.into_inner() {
+                        Ok(value) => value,
+                        Err(_) => return Err(NutsError::lock_error("Failed to get inner value from mutex")),
+                    },
+                    Err(_) => return Err(NutsError::internal("Failed to unwrap Arc")),
+                },
                 "failed",
-            );
+            ));
         }
     };
     
-    let stdout = child.stdout.take().expect("Failed to capture stdout");
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => return Err(NutsError::internal("Failed to capture stdout from bpftrace process")),
+    };
     let reader = BufReader::new(stdout);
     
     // 采集超时控制
@@ -125,24 +147,24 @@ pub fn run_network_collect_poc(cfg: NetworkCollectorConfig) -> Evidence {
             break;
         }
         
-        let line = match line {
+        let line_str = match line {
             Ok(l) => l,
             Err(_) => continue,
         };
         
         // 解析 JSON 输出
-        if let Ok(event) = serde_json::from_str::<BpftraceNetworkEvent>(&line) {
+        if let Ok(event) = serde_json::from_str::<BpftraceNetworkEvent>(&line_str) {
             match event.event_type.as_str() {
                 "tcp_connect" => {
                     if let Some(latency) = event.latency_us {
-                        let mut latencies = latencies_clone.lock().unwrap();
+                        let mut latencies = latencies_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                         latencies.push(latency);
                     }
-                    let mut events = events_clone.lock().unwrap();
+                    let mut events = events_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                     events.push(event);
                 }
                 "tcp_reset" | "tcp_fail" => {
-                    let mut events = events_clone.lock().unwrap();
+                    let mut events = events_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
                     events.push(event);
                 }
                 _ => {}
@@ -166,10 +188,10 @@ pub fn run_network_collect_poc(cfg: NetworkCollectorConfig) -> Evidence {
     
     let collection_status = if errors.is_empty() { "success" } else { "partial" };
     
-    build_evidence(
+Ok(    build_evidence(
         cfg, scope_key, collection_id, probe_id,
         latencies, events, errors, collection_status,
-    )
+    ))
 }
 
 fn build_evidence(

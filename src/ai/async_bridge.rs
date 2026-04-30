@@ -63,7 +63,7 @@ pub struct AiTaskQueue {
 pub enum AiTaskState {
     Pending { submitted_at_ms: i64 },
     Processing { started_at_ms: i64 },
-    Completed { result: AiEnhancedDiagnosis },
+    Completed { result: AiEnhancedDiagnosis, completed_at_ms: i64 },
     Failed { error: String, retry_count: u32 },
 }
 
@@ -128,10 +128,10 @@ impl AiTaskQueue {
         let cutoff = chrono::Utc::now().timestamp_millis() - max_age_ms;
         let mut tasks = self.pending_tasks.write().await;
         tasks.retain(|_task_id, state| match state {
-            AiTaskState::Completed { result } => {
-                result.processing_ms > cutoff  // 保留较新的结果
+            AiTaskState::Completed { completed_at_ms, .. } => {
+                *completed_at_ms > cutoff
             }
-            _ => true,  // 保留未完成/失败的任务
+            _ => true,
         });
     }
     
@@ -222,13 +222,13 @@ impl AiResultStore {
         }
     }
     
-    /// 清理过期结果
+    /// 清理过期结果（基于 created_at 而非 processing_ms）
     pub async fn cleanup(&self, max_age_ms: i64) {
-        let _cutoff = chrono::Utc::now().timestamp_millis() - max_age_ms;
+        let now = std::time::Instant::now();
+        let max_age = std::time::Duration::from_millis(max_age_ms as u64);
         let mut results = self.results.write().await;
         results.retain(|_task_id, result| {
-            let age = chrono::Utc::now().timestamp_millis() - result.processing_ms;
-            age < max_age_ms
+            now.duration_since(result.created_at) < max_age
         });
     }
 }
@@ -291,7 +291,10 @@ impl AiWorker {
         queue_state: Arc<RwLock<HashMap<String, AiTaskState>>>,
         notification_tx: Option<mpsc::Sender<AiCompletionNotification>>,
     ) -> Self {
-        let adapter = AiAdapter::new(config.adapter_config.clone());
+        let adapter = AiAdapter::with_evidence_check(
+            config.adapter_config.clone(),
+            crate::ai::EvidenceCheckConfig::default(),
+        );
         
         Self {
             config,
@@ -332,12 +335,18 @@ impl AiWorker {
             tokio::select! {
                 // 接收新任务
                 Some(task) = self.queue_rx.recv() => {
-                    let permit = semaphore.clone().acquire_owned().await.unwrap();
+                    let permit = match semaphore.clone().acquire_owned().await {
+                        Ok(permit) => permit,
+                        Err(e) => {
+                            tracing::error!("Failed to acquire semaphore permit: {}", e);
+                            continue;
+                        }
+                    };
                     let adapter = self.adapter.clone();
                     let store = Arc::clone(&self.result_store);
                     let queue_state = Arc::clone(&self.queue_state);
                     let retry_limit = self.config.retry_limit;
-                    
+
                     let notification_tx = self.notification_tx.clone();
                     
                     tokio::spawn(async move {
@@ -360,7 +369,7 @@ impl AiWorker {
         }
     }
     
-    /// 处理单个任务
+    /// 处理单个任务（含重试）
     async fn process_task(
         task: AiTask,
         adapter: AiAdapter,
@@ -370,30 +379,173 @@ impl AiWorker {
         notification_tx: Option<mpsc::Sender<AiCompletionNotification>>,
     ) {
         let task_id = task.task_id.clone();
+
+        // 重试循环
+        let mut current_task = task;
+        loop {
+            match Self::attempt_task(&current_task, &adapter, &store, &queue_state).await {
+                Ok(()) => {
+                    // 成功或最终失败都发通知
+                    if let Some(ref tx) = notification_tx {
+                        let notification = AiCompletionNotification {
+                            task_id: task_id.clone(),
+                            diagnosis_id: task_id.clone(),
+                            status: "completed".to_string(),
+                            completed_at_ms: chrono::Utc::now().timestamp_millis(),
+                        };
+                        if let Err(e) = tx.send(notification).await {
+                            tracing::warn!("[AI Worker] Failed to send notification: {}", e);
+                        }
+                    }
+                    return;
+                }
+                Err(e) => {
+                    if current_task.retry_count < retry_limit {
+                        tracing::warn!(
+                            "[AI Worker] Task {} failed (attempt {}/{}): {}, retrying...",
+                            task_id, current_task.retry_count + 1, retry_limit, e
+                        );
+
+                        // 更新状态
+                        {
+                            let mut state = queue_state.write().await;
+                            state.insert(
+                                task_id.clone(),
+                                AiTaskState::Failed {
+                                    error: format!("{} (retrying {}/{})", e, current_task.retry_count + 1, retry_limit),
+                                    retry_count: current_task.retry_count + 1,
+                                },
+                            );
+                        }
+
+                        // 退避延迟
+                        let delay = std::time::Duration::from_millis(500 * (current_task.retry_count as u64 + 1));
+                        tokio::time::sleep(delay).await;
+
+                        current_task = AiTask {
+                            retry_count: current_task.retry_count + 1,
+                            ..current_task
+                        };
+                    } else {
+                        // 最终失败
+                        tracing::error!("[AI Worker] Task {} failed after {} retries: {}", task_id, retry_limit, e);
+
+                        let processing_ms = chrono::Utc::now().timestamp_millis() - current_task.submitted_at_ms;
+                        let fallback = adapter.apply_fallback(&current_task.diagnosis_snapshot);
+
+                        let result = AiEnhancedDiagnosis {
+                            original: current_task.diagnosis_snapshot.clone(),
+                            ai_output: None,
+                            enhanced: fallback,
+                            ai_status: AiStatus::Unavailable,
+                            processing_ms,
+                            created_at: std::time::Instant::now(),
+                        };
+
+                        store.store(&task_id, result).await;
+
+                        {
+                            let mut state = queue_state.write().await;
+                            state.insert(
+                                task_id.clone(),
+                                AiTaskState::Failed {
+                                    error: format!("{} (final after {} retries)", e, retry_limit),
+                                    retry_count: current_task.retry_count,
+                                },
+                            );
+                        }
+
+                        // 失败也发通知
+                        if let Some(ref tx) = notification_tx {
+                            let notification = AiCompletionNotification {
+                                task_id: task_id.clone(),
+                                diagnosis_id: task_id.clone(),
+                                status: "failed".to_string(),
+                                completed_at_ms: chrono::Utc::now().timestamp_millis(),
+                            };
+                            if let Err(e) = tx.send(notification).await {
+                                tracing::warn!("[AI Worker] Failed to send failure notification: {}", e);
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// 单次尝试处理任务
+    async fn attempt_task(
+        task: &AiTask,
+        adapter: &AiAdapter,
+        store: &Arc<AiResultStore>,
+        queue_state: &Arc<RwLock<HashMap<String, AiTaskState>>>,
+    ) -> Result<(), String> {
+        let task_id = task.task_id.clone();
         let started_at_ms = chrono::Utc::now().timestamp_millis();
-        
-        tracing::info!("[AI Worker] Processing task {} (priority={:?}, retry={})", 
-            task_id, task.priority, task.retry_count);
-        
+
+        tracing::info!(
+            "[AI Worker] Processing task {} (priority={:?}, retry={})",
+            task_id, task.priority, task.retry_count
+        );
+
         // 更新状态为处理中
         {
             let mut state = queue_state.write().await;
-            state.insert(
-                task_id.clone(),
-                AiTaskState::Processing { started_at_ms },
-            );
+            state.insert(task_id.clone(), AiTaskState::Processing { started_at_ms });
         }
-        
+
+        // 二次校验证据充分性（任务入队后可能经过了时间延迟，再次确认）
+        match adapter.check_evidence_sufficiency(&task.diagnosis_snapshot, &task.evidences) {
+            crate::ai::EvidenceSufficiency::Sufficient => {}
+            crate::ai::EvidenceSufficiency::Insufficient(reason) => {
+                tracing::info!(
+                    "[AI Worker] Task {} skipped: evidence insufficient on re-check ({:?})",
+                    task_id, reason
+                );
+                let completed_at_ms = chrono::Utc::now().timestamp_millis();
+                let processing_ms = completed_at_ms - task.submitted_at_ms;
+
+                let result = AiEnhancedDiagnosis {
+                    original: task.diagnosis_snapshot.clone(),
+                    ai_output: None,
+                    enhanced: task.diagnosis_snapshot.clone(),
+                    ai_status: AiStatus::SkippedInsufficientEvidence,
+                    processing_ms,
+                    created_at: std::time::Instant::now(),
+                };
+
+                store.store(&task_id, result).await;
+
+                {
+                    let mut state = queue_state.write().await;
+                    state.insert(task_id.clone(), AiTaskState::Completed {
+                        result: crate::ai::AiEnhancedDiagnosis {
+                            original: task.diagnosis_snapshot.clone(),
+                            ai_output: None,
+                            enhanced: task.diagnosis_snapshot.clone(),
+                            ai_status: AiStatus::SkippedInsufficientEvidence,
+                            processing_ms,
+                            created_at: std::time::Instant::now(),
+                        },
+                        completed_at_ms,
+                    });
+                }
+
+                // 证据不足不算失败，直接返回 Ok
+                return Ok(());
+            }
+        }
+
         // 构建输入并调用AI
         let input = adapter.build_input(&task.diagnosis_snapshot, &task.evidences);
-        
+
         match adapter.call_ai(&input).await {
             Ok(ai_output) => {
-                // 成功：合并结果
                 let enhanced = adapter.enhance_diagnosis(&task.diagnosis_snapshot, &ai_output);
                 let completed_at_ms = chrono::Utc::now().timestamp_millis();
                 let processing_ms = completed_at_ms - task.submitted_at_ms;
-                
+
                 let result = AiEnhancedDiagnosis {
                     original: task.diagnosis_snapshot.clone(),
                     ai_output: Some(ai_output),
@@ -402,73 +554,21 @@ impl AiWorker {
                     processing_ms,
                     created_at: std::time::Instant::now(),
                 };
-                
-                // 存储结果
+
                 store.store(&task_id, result.clone()).await;
-                
-                // 更新状态
+
                 {
                     let mut state = queue_state.write().await;
-                    state.insert(task_id.clone(), AiTaskState::Completed { result });
+                    state.insert(task_id.clone(), AiTaskState::Completed {
+                        result,
+                        completed_at_ms,
+                    });
                 }
-                
+
                 tracing::info!("[AI Worker] Task {} completed in {}ms", task_id, processing_ms);
-                
-                // 触发增量 Publisher 通知
-                if let Some(ref tx) = notification_tx {
-                    let notification = AiCompletionNotification {
-                        task_id: task_id.clone(),
-                        diagnosis_id: task_id.clone(), // 使用 task_id 作为 diagnosis_id
-                        status: "completed".to_string(),
-                        completed_at_ms: chrono::Utc::now().timestamp_millis(),
-                    };
-                    if let Err(e) = tx.send(notification).await {
-                        tracing::warn!("[AI Worker] Failed to send notification: {}", e);
-                    }
-                }
+                Ok(())
             }
-            
-            Err(e) => {
-                tracing::warn!("[AI Worker] Task {} failed: {}", task_id, e);
-                
-                if task.retry_count < retry_limit {
-                    // 重试（实际应重新入队，这里简化处理）
-                    let mut state = queue_state.write().await;
-                    state.insert(
-                        task_id.clone(),
-                        AiTaskState::Failed {
-                            error: format!("{} (will retry)", e),
-                            retry_count: task.retry_count + 1,
-                        },
-                    );
-                } else {
-                    // 最终失败
-                    let processing_ms = chrono::Utc::now().timestamp_millis() - task.submitted_at_ms;
-                    let fallback = adapter.apply_fallback(&task.diagnosis_snapshot);
-                    
-                    let result = AiEnhancedDiagnosis {
-                        original: task.diagnosis_snapshot.clone(),
-                        ai_output: None,
-                        enhanced: fallback,
-                        ai_status: AiStatus::Unavailable,
-                        processing_ms,
-                        created_at: std::time::Instant::now(),
-                    };
-                    
-                    store.store(&task_id, result.clone()).await;
-                    
-                    let mut state = queue_state.write().await;
-                    state.insert(
-                        task_id.clone(),
-                        AiTaskState::Failed {
-                            error: format!("{} (final after {} retries)", e, task.retry_count),
-                            retry_count: task.retry_count,
-                        },
-                    );
-                    
-                    tracing::error!("[AI Worker] Task {} failed after {} retries", task_id, retry_limit);
-                }
-            }
+            Err(e) => Err(format!("{}", e)),
         }
     }
 }

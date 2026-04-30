@@ -142,6 +142,7 @@ impl From<AiConfig> for AiAdapterConfig {
             fallback_mode: match config.fallback_mode.as_str() {
                 "reduce_confidence" => crate::ai::AiFallbackMode::ReduceConfidence,
                 "mark_for_review" => crate::ai::AiFallbackMode::MarkForReview,
+                "skip_ai" => crate::ai::AiFallbackMode::SkipAi,
                 _ => crate::ai::AiFallbackMode::KeepOriginal,
             },
             model: config.model,

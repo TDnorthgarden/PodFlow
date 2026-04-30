@@ -6,6 +6,7 @@
 //! - 更好安全（文件系统权限控制）
 //! - 更低资源占用
 
+use crate::types::error::NutsError;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -460,7 +461,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_nri_frame_parse() {
+    fn test_nri_frame_parse() -> Result<(), Box<dyn std::error::Error>> {
         let json = r#"{"event_type":"ADD","pod_uid":"pod-123","pod_name":"test-pod","namespace":"default","containers":[{"container_id":"container-1","cgroup_ids":["cg-1","cg-2"],"pids":[1234,5678]}]}"#;
 
         let events = parse_nri_frame(json.as_bytes()).unwrap();
@@ -471,8 +472,9 @@ mod tests {
                 assert_eq!(pod.pod_uid, "pod-123");
                 assert_eq!(pod.containers.len(), 1);
             }
-            _ => panic!("Expected AddOrUpdate event"),
+            _ => return Err(NutsError::internal("Expected AddOrUpdate event").into()),
         }
+        Ok(())
     }
 
     #[test]

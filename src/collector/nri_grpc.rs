@@ -11,6 +11,7 @@
 //! - 更好的生态兼容性
 #![cfg(feature = "nri-grpc")]
 
+use crate::types::error::NutsError;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tonic::{Request, Response, Status, Streaming};
@@ -555,7 +556,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_event_conversion() {
+    fn test_event_conversion() -> Result<(), Box<dyn std::error::Error>> {
         let table = Arc::new(NriMappingTableV2::new());
         let (tx, _rx) = mpsc::channel(10);
         let service = NriGrpcService::new(table, tx);
@@ -579,8 +580,9 @@ mod tests {
             NriEvent::AddOrUpdate(pod) => {
                 assert_eq!(pod.pod_uid, "test-uid");
             }
-            _ => panic!("Expected AddOrUpdate event"),
+            _ => return Err(NutsError::internal("Expected AddOrUpdate event").into()),
         }
+        Ok(())
     }
 
     #[tokio::test]

@@ -2,6 +2,7 @@
 //!
 //! 提供命令行接口与 nuts-observer 服务交互
 
+use crate::types::error::NutsError;
 use clap::{Parser, Subcommand};
 use reqwest;
 use serde_json::json;
@@ -14,7 +15,7 @@ use std::time::Duration;
 #[command(version = "0.1.0")]
 pub struct Cli {
     /// 服务地址
-    #[arg(short, long, default_value = "http://localhost:3000")]
+    #[arg(short, long, default_value = "http://localhost:8080")]
     pub server: String,
 
     /// 子命令
@@ -497,7 +498,10 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
 fn print_trigger_result(result: &serde_json::Value, format: OutputFormat) {
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(result).unwrap());
+            match serde_json::to_string_pretty(result) {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("Failed to serialize result to JSON: {}", e),
+            }
         }
         OutputFormat::Pretty => {
             println!("\n📋 诊断结果");
@@ -1450,7 +1454,10 @@ async fn handle_config_command(
                 match output {
                     ListOutputFormat::Json => {
                         let json_filtered: Vec<_> = filtered.iter().map(|&r| r.clone()).collect();
-                        println!("{}", serde_json::to_string_pretty(&json_filtered).unwrap());
+                        println!("{}", match serde_json::to_string_pretty(&json_filtered) {
+                Ok(json) => json,
+                Err(e) => return Err(NutsError::Json(e)),
+            });
                     }
                     ListOutputFormat::Simple => {
                         for rule in &filtered {
@@ -1517,7 +1524,10 @@ async fn handle_config_command(
             
             let result: serde_json::Value = response.json().await?;
             if let Some(rule) = result.get("data") {
-                println!("{}", serde_json::to_string_pretty(rule).unwrap());
+                println!("{}", match serde_json::to_string_pretty(rule) {
+                Ok(json) => json,
+                Err(e) => return Err(NutsError::Json(e)),
+            });
             }
         }
         
@@ -1694,7 +1704,10 @@ async fn handle_config_command(
             
             let result: serde_json::Value = response.json().await?;
             if let Some(status) = result.get("data") {
-                println!("{}", serde_json::to_string_pretty(status).unwrap());
+                println!("{}", match serde_json::to_string_pretty(status) {
+                Ok(json) => json,
+                Err(e) => return Err(NutsError::Json(e)),
+            });
             }
         }
     }
@@ -1893,7 +1906,10 @@ fn print_pod_list(pods: &[PodSummaryInfo], format: ListOutputFormat) {
                 })).collect::<Vec<_>>(),
                 "total": pods.len(),
             });
-            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+            println!("{}", match serde_json::to_string_pretty(&json) {
+                Ok(json) => json,
+                Err(e) => return Err(NutsError::Json(e)),
+            });
         }
         ListOutputFormat::Simple => {
             for pod in pods {
@@ -1985,7 +2001,7 @@ mod tests {
                 assert_eq!(namespace, "default");
                 assert_eq!(evidence_types, vec!["block_io", "network"]);
             }
-            _ => panic!("Expected Trigger command"),
+            _ => return Err(NutsError::internal("Expected Trigger command"));,
         }
     }
 }
