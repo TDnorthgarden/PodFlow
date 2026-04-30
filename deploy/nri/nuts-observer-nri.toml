@@ -1,0 +1,55 @@
+# Nuts Observer NRI Plugin Configuration
+# 该配置文件用于 containerd NRI 插件注册
+# 路径: /etc/nri/conf.d/nuts-observer-nri.toml
+
+[plugin]
+# 插件名称
+name = "nuts-observer"
+
+# 插件索引 (00-99，数字越小优先级越高)
+idx = "00"
+
+# NRI 协议版本
+nri_version = "1.0.0"
+
+# 插件套接字路径 (Unix Socket)
+socket_path = "/var/run/nri/nuts-observer.sock"
+
+# 是否自动向 containerd 注册
+auto_register = true
+
+# containerd NRI 运行时套接字路径
+runtime_socket_path = "/var/run/nri/nri.sock"
+
+# 事件订阅配置
+[events]
+# 订阅 Pod 事件
+pod_events = true
+
+# 订阅容器事件
+container_events = true
+
+# 订阅运行时事件
+runtime_events = false
+
+# 日志配置
+[log]
+# 日志级别: trace, debug, info, warn, error
+level = "info"
+
+# 日志输出: stdout, stderr, file
+output = "stdout"
+
+# 性能优化配置
+[performance]
+# 最大并发处理数
+max_concurrent = 100
+
+# 事件缓冲区大小
+event_buffer_size = 1000
+
+# 批量处理大小
+batch_size = 10
+
+# 批量处理超时(毫秒)
+batch_timeout_ms = 100

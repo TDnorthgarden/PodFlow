@@ -12,9 +12,15 @@ use nuts_observer::api::health::{router as health_router, AppState};
 use nuts_observer::api::diagnosis::{router as diagnosis_router, DiagnosisApiState};
 use axum::Router;
 use nuts_observer::collector::nri_v3::{create_nri_v3, NriV3Config, NriV3};
-use nuts_observer::collector::nri_mapping::NriMappingTable;
+use nuts_observer::collector::nri_mapping::{NriMappingTable, NriEvent};
 use nuts_observer::collector::nri_mapping_v2::NriMappingTableV2;
 use nuts_observer::collector::oom_events::{OomEventListener, OomListenerConfig};
+
+// Containerd NRI 官方协议支持 (仅在启用 nri-grpc feature 时可用)
+#[cfg(feature = "nri-grpc")]
+use nuts_observer::collector::nri_containerd::ContainerdNriConfig;
+#[cfg(feature = "nri-grpc")]
+use tokio::sync::mpsc;
 use nuts_observer::config::{Config, ConfigError};
 use nuts_observer::ai::async_bridge::{start_ai_system, AiWorker, AiWorkerConfig, AiCompletionNotification, AiResultStore};
 use nuts_observer::ai::{AiAdapter, EvidenceCheckConfig};
@@ -112,6 +118,49 @@ async fn run_server() {
     };
     let nri_v3 = Arc::new(nri_v3);
     tracing::info!("NRI mapping table initialized");
+
+    // 启动 Containerd NRI Plugin 服务 (官方协议)
+    #[cfg(feature = "nri-grpc")]
+    {
+        let (nri_event_tx, mut nri_event_rx) = mpsc::channel::<NriEvent>(1000);
+
+        // 创建并启动 containerd NRI 插件服务
+        let containerd_nri_config = ContainerdNriConfig {
+            socket_path: "/var/run/nri/nuts-observer.sock".to_string(),
+            plugin_name: "nuts-observer".to_string(),
+            plugin_idx: "00".to_string(),
+            nri_version: "1.0.0".to_string(),
+            auto_register: true,
+            runtime_socket_path: "/var/run/nri/nri.sock".to_string(),
+        };
+
+        // 获取 NRI V3 的映射表用于 containerd NRI 服务
+        let nri_v3_table = Arc::clone(&nri_v3.table());
+        let containerd_nri = nuts_observer::collector::nri_containerd::ContainerdNriPlugin::new(
+            containerd_nri_config,
+            nri_v3_table,
+            nri_event_tx,
+        );
+
+        // 在后台任务中启动 NRI 服务
+        tokio::spawn(async move {
+            if let Err(e) = containerd_nri.start().await {
+                tracing::error!("[ContainerdNri] Service error: {}", e);
+            }
+        });
+
+        // 处理从 containerd 接收的事件，更新到映射表
+        let nri_v3_table_for_events = Arc::clone(&nri_v3.table());
+        tokio::spawn(async move {
+            while let Some(event) = nri_event_rx.recv().await {
+                if let Err(e) = nri_v3_table_for_events.update_from_nri(event).await {
+                    tracing::warn!("[ContainerdNri] Failed to update mapping table: {}", e);
+                }
+            }
+        });
+
+        tracing::info!("Containerd NRI Plugin service started (socket: /var/run/nri/nuts-observer.sock)");
+    }
 
     // 启动条件触发服务（从配置读取）
     let condition_triggers: Vec<_> = config_read.condition_triggers.clone();
