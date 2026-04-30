@@ -1,0 +1,216 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nuts-observer-nri
+  namespace: kube-system
+  labels:
+    app: nuts-observer-nri
+    component: observability
+spec:
+  selector:
+    matchLabels:
+      app: nuts-observer-nri
+  template:
+    metadata:
+      labels:
+        app: nuts-observer-nri
+        component: observability
+    spec:
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      
+      # 特权容器（用于访问 host 的 /var/run/nri）
+      containers:
+        - name: nuts-observer-nri
+          image: nuts-observer:latest
+          imagePullPolicy: IfNotPresent
+          
+          command:
+            - /usr/bin/nuts-observer
+          
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            capabilities:
+              add:
+                - SYS_ADMIN
+                - SYS_PTRACE
+                - BPF
+                - NET_ADMIN
+                - IPC_LOCK
+          
+          volumeMounts:
+            # NRI 套接字目录
+            - name: nri-socket-dir
+              mountPath: /var/run/nri
+            
+            # NRI 配置目录
+            - name: nri-conf-dir
+              mountPath: /etc/nri/conf.d
+            
+            # Cgroup 信息
+            - name: cgroup
+              mountPath: /sys/fs/cgroup
+              readOnly: true
+            
+            # Proc 文件系统
+            - name: proc
+              mountPath: /proc
+              readOnly: true
+            
+            # 日志目录
+            - name: log
+              mountPath: /var/log/nuts
+            
+            # 持久化数据
+            - name: data
+              mountPath: /var/lib/nuts
+            
+            # 配置文件
+            - name: config
+              mountPath: /etc/nuts
+          
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          
+          env:
+            - name: RUST_LOG
+              value: "info"
+            - name: NUTS_NRI_SOCKET_PATH
+              value: "/var/run/nri/nuts-observer.sock"
+            - name: NUTS_NRI_AUTO_REGISTER
+              value: "true"
+      
+      volumes:
+        - name: nri-socket-dir
+          hostPath:
+            path: /var/run/nri
+            type: DirectoryOrCreate
+        
+        - name: nri-conf-dir
+          hostPath:
+            path: /etc/nri/conf.d
+            type: DirectoryOrCreate
+        
+        - name: cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+            type: Directory
+        
+        - name: proc
+          hostPath:
+            path: /proc
+            type: Directory
+        
+        - name: log
+          hostPath:
+            path: /var/log/nuts
+            type: DirectoryOrCreate
+        
+        - name: data
+          hostPath:
+            path: /var/lib/nuts
+            type: DirectoryOrCreate
+        
+        - name: config
+          configMap:
+            name: nuts-observer-config
+      
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+        - operator: Exists
+          effect: NoExecute
+        - operator: Exists
+          effect: PreferNoSchedule
+      
+      nodeSelector:
+        kubernetes.io/os: linux
+      
+      serviceAccountName: nuts-observer-nri
+      
+      priorityClassName: system-node-critical
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nuts-observer-nri
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nuts-observer-nri
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nuts-observer-nri
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: nuts-observer-nri
+subjects:
+  - kind: ServiceAccount
+    name: nuts-observer-nri
+    namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nuts-observer-config
+  namespace: kube-system
+data:
+  config.yaml: |
+    server:
+      bind_address: "0.0.0.0"
+      port: 8080
+    
+    log_level: "info"
+    
+    ai:
+      enabled: false
+      provider: "openai"
+      model: "gpt-4"
+      timeout_secs: 30
+    
+    alert:
+      enabled: false
+      throttle_secs: 60
+    
+    condition_triggers: []

@@ -1,0 +1,224 @@
+syntax = "proto3";
+
+package nri.plugin.v1;
+
+option go_package = "github.com/containerd/nri/pkg/api;api";
+
+// Runtime service is the public API runtimes expose for NRI plugins.
+// On this interface RPC requests are initiated by the plugin.
+service Runtime {
+    // RegisterPlugin is used by the plugin to register itself with the runtime.
+    rpc RegisterPlugin(RegisterPluginRequest) returns (RegisterPluginResponse);
+    // UpdateContainers is used by the plugin to request the runtime to update containers.
+    rpc UpdateContainers(UpdateContainersRequest) returns (UpdateContainersResponse);
+}
+
+// Plugin service is the public API plugins must expose for the runtime.
+// On this interface RPC requests are initiated by the runtime.
+service Plugin {
+    // Configure is the first request issued by the runtime to the plugin,
+    // used to configure the plugin with runtime-specific configuration.
+    rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+    // Synchronize is used by the runtime to synchronize its state with the plugin.
+    rpc Synchronize(SynchronizeRequest) returns (SynchronizeResponse);
+    // CreateContainer is called by the runtime when a container is being created.
+    rpc CreateContainer(CreateContainerRequest) returns (CreateContainerResponse);
+    // UpdateContainer is called by the runtime when a container is being updated.
+    rpc UpdateContainer(UpdateContainerRequest) returns (UpdateContainerResponse);
+    // StopContainer is called by the runtime when a container is being stopped.
+    rpc StopContainer(StopContainerRequest) returns (StopContainerResponse);
+}
+
+// RegisterPluginRequest is the request used to register a plugin.
+message RegisterPluginRequest {
+    string plugin_name = 1;
+    string plugin_idx = 2;
+    repeated EventCapability capabilities = 3;
+}
+
+// RegisterPluginResponse is the response to a RegisterPlugin request.
+message RegisterPluginResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// EventCapability defines the events a plugin is interested in.
+enum EventCapability {
+    UNKNOWN = 0;
+    RUNTIME_EVENTS = 1;
+    POD_EVENTS = 2;
+    CONTAINER_EVENTS = 3;
+}
+
+// UpdateContainersRequest is used to request container updates.
+message UpdateContainersRequest {
+    repeated ContainerUpdate updates = 1;
+}
+
+// ContainerUpdate defines an update to be applied to a container.
+message ContainerUpdate {
+    string container_id = 1;
+    LinuxResources linux_resources = 2;
+    repeated string exec_ids = 3;
+}
+
+// LinuxResources contains Linux-specific resource limits.
+message LinuxResources {
+    int64 cpu_period = 1;
+    int64 cpu_quota = 2;
+    uint64 cpu_shares = 3;
+    int64 memory_limit = 4;
+    int64 memory_swap = 5;
+    repeated string cpuset_cpus = 6;
+    repeated string cpuset_mems = 7;
+}
+
+// UpdateContainersResponse is the response to an UpdateContainers request.
+message UpdateContainersResponse {
+    bool success = 1;
+    repeated ContainerUpdateFailure failures = 2;
+}
+
+// ContainerUpdateFailure reports a failed container update.
+message ContainerUpdateFailure {
+    string container_id = 1;
+    string error = 2;
+}
+
+// ConfigureRequest is the request used to configure a plugin.
+message ConfigureRequest {
+    string runtime_name = 1;
+    string runtime_version = 2;
+    string plugin_name = 3;
+    string plugin_idx = 4;
+    bytes plugin_config = 5;
+}
+
+// ConfigureResponse is the response to a Configure request.
+message ConfigureResponse {
+    bool success = 1;
+    string error = 2;
+    repeated EventCapability events = 3;
+}
+
+// SynchronizeRequest is used by the runtime to synchronize state.
+message SynchronizeRequest {
+    repeated PodSandbox pods = 1;
+    repeated Container containers = 2;
+}
+
+// SynchronizeResponse is the response to a Synchronize request.
+message SynchronizeResponse {
+    repeated ContainerUpdate updates = 1;
+}
+
+// CreateContainerRequest is the request for creating a container.
+message CreateContainerRequest {
+    PodSandbox pod = 1;
+    Container container = 2;
+}
+
+// CreateContainerResponse is the response to a CreateContainer request.
+message CreateContainerResponse {
+    bool success = 1;
+    string error = 2;
+    ContainerUpdate update = 3;
+}
+
+// UpdateContainerRequest is the request for updating a container.
+message UpdateContainerRequest {
+    PodSandbox pod = 1;
+    Container container = 2;
+    Container updated = 3;
+    LinuxResources linux_resources = 4;
+}
+
+// UpdateContainerResponse is the response to an UpdateContainer request.
+message UpdateContainerResponse {
+    bool success = 1;
+    string error = 2;
+    ContainerUpdate update = 3;
+}
+
+// StopContainerRequest is the request for stopping a container.
+message StopContainerRequest {
+    PodSandbox pod = 1;
+    Container container = 2;
+}
+
+// StopContainerResponse is the response to a StopContainer request.
+message StopContainerResponse {
+    bool success = 1;
+    string error = 2;
+    ContainerUpdate update = 3;
+}
+
+// PodSandbox describes a pod sandbox.
+message PodSandbox {
+    string pod_uid = 1;
+    string name = 2;
+    string namespace = 3;
+    map<string, string> labels = 4;
+    map<string, string> annotations = 5;
+    string runtime_handler = 6;
+    LinuxPodSandbox linux = 7;
+    repeated string ips = 8;
+}
+
+// LinuxPodSandbox contains Linux-specific pod configuration.
+message LinuxPodSandbox {
+    LinuxPodResources resources = 1;
+    LinuxPodOverhead overhead = 2;
+    string cgroup_parent = 3;
+    repeated LinuxNamespace namespaces = 4;
+}
+
+// LinuxPodResources contains pod-level resource limits.
+message LinuxPodResources {
+    int64 cpu_period = 1;
+    int64 cpu_quota = 2;
+    uint64 cpu_shares = 3;
+    int64 memory_limit = 4;
+    int64 memory_swap = 5;
+    repeated string cpuset_cpus = 6;
+    repeated string cpuset_mems = 7;
+}
+
+// LinuxPodOverhead contains pod-level overhead resources.
+message LinuxPodOverhead {
+    int64 cpu_count = 1;
+    int64 memory_bytes = 2;
+}
+
+// Container describes a container.
+message Container {
+    string container_id = 1;
+    string pod_uid = 2;
+    string name = 3;
+    string state = 4; // creating, created, running, stopped, paused
+    int64 pid = 5;
+    int64 exec_ids = 6;
+    map<string, string> labels = 7;
+    map<string, string> annotations = 8;
+    LinuxContainer linux = 9;
+    repeated string exec_id_list = 10;
+}
+
+// LinuxContainer contains Linux-specific container configuration.
+message LinuxContainer {
+    repeated LinuxNamespace namespaces = 1;
+    LinuxResources resources = 2;
+    string cgroup_path = 3;
+    repeated int64 cgroups = 4; // cgroup IDs
+    repeated int64 pids = 5; // process IDs
+}
+
+// LinuxNamespace describes a Linux namespace.
+message LinuxNamespace {
+    string type = 1; // pid, network, ipc, uts, user, mount, cgroup
+    string path = 2;
+    uint32 inode = 3;
+}
+
+// Empty is an empty message.
+message Empty {}
