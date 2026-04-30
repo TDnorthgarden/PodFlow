@@ -1,0 +1,71 @@
+[Unit]
+Description=Nuts Collector Daemon (Privileged eBPF Collector)
+After=network.target
+Documentation=https://github.com/yourorg/nuts-observer
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# 启动命令
+ExecStart=/usr/bin/nuts-collector-daemon /run/nuts/collector.sock
+ExecReload=/bin/kill -HUP $MAINPID
+
+# 重启策略
+Restart=always
+RestartSec=5
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# 权限设置 - 使用 Linux capabilities
+# CAP_BPF: 加载 eBPF 程序
+# CAP_SYS_ADMIN: 访问 /proc, tracepoints
+# CAP_SYS_PTRACE: 附加到其他进程
+# CAP_NET_ADMIN: 网络相关 eBPF
+# CAP_IPC_LOCK: 锁定内存
+AmbientCapabilities=CAP_BPF CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN CAP_IPC_LOCK
+CapabilityBoundingSet=CAP_BPF CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN CAP_IPC_LOCK
+NoNewPrivileges=true
+
+# 安全加固
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+
+# 允许读写的路径（必须在 ProtectSystem 之后定义）
+ReadWritePaths=/run/nuts /tmp
+ReadOnlyPaths=/usr/share/bpftrace /usr/lib/bpftrace
+
+# 确保 /run/nuts 目录存在且可写
+RuntimeDirectory=nuts
+RuntimeDirectoryMode=0755
+
+# 限制 /proc 和 /sys 访问
+ProtectKernelLogs=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# 命名空间隔离
+PrivateTmp=true
+PrivateDevices=true
+
+# 资源限制
+LimitNOFILE=65536
+MemoryMax=512M
+CPUQuota=50%
+TasksMax=1024
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nuts-collector
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,39 @@
+# Nginx网络延迟适配器配置示例
+# 用于将非标准格式的nginx日志转换为标准bpftrace输出
+
+adapter_id: nginx_network_latency
+version: v0.1
+source_type: regex_log
+evidence_type: network  # 对应Evidence.evidence_type
+
+# 源数据格式匹配模式
+# 支持Python正则表达式命名捕获组
+source_pattern: '\[(?<ts>[^\]]+)\]\s+PID:(?<pid>\d+)\s+Process:(?<comm>\w+)\s+Latency:(?<latency>\d+)us\s+Target:(?<target>[\d.]+)'
+
+# 目标输出字段映射
+# 支持: 字段引用 ${field_name} 或 解析函数 parse_xxx()
+field_mappings:
+  latency_us: "${latency}"
+  target: "${target}"
+  # 时间戳转换
+  ts_ms: "parse_timestamp(${ts}, '%Y-%m-%d %H:%M:%S')"
+
+# 固定/默认值
+static_fields:
+  type: "tcp_connect"
+
+# 事件类型推断规则 (可选)
+event_type_rules:
+  - condition: "${latency} > 1000"
+    type: "tcp_slow_connect"
+  - condition: "${target} == '192.168.1.1'"
+    type: "tcp_db_connect"
+
+# 过滤规则 (可选)
+filter_rules:
+  - exclude: "${comm} == 'systemd'"  # 排除systemd进程
+  - include: "${latency} > 100"       # 只包含慢请求
+
+# 示例转换
+# 输入: [2024-01-15 10:30:45] PID:1234 Process:nginx Latency:1234us Target:192.168.1.1
+# 输出: {"type":"tcp_connect","pid":1234,"comm":"nginx","latency_us":1234,"target":"192.168.1.1","ts_ms":1705319445000}

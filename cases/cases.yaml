@@ -1,0 +1,290 @@
+# nuts-observer 扩展案例库配置
+# 从 witty-ops-cases 导入的案例
+
+# witty-ops-cases 分类参考:
+# - CPU: cpu-steal, cpu-softlock, cpu-hardlock
+# - Memory: memory-fragmentation, memory-leak, memory-oom-kill
+# - Network: network-packet-loss, network-conntrack-full, network-dns-delay
+# - Storage: storage-io-hang, storage-filesystem-corruption, storage-thin-pool-full
+# - System: kernel-hung-task, kernel-rcu-stall, systemd-service-failed
+
+cases:
+  # ========== CPU类 (从witty-ops-cases扩展) ==========
+  - case_id: "euler-cpu-steal-001"
+    title: "KVM虚拟机CPU steal time过高"
+    description: |
+      在KVM虚拟化环境中，虚拟机CPU steal time持续高于10%，
+      表明宿主机存在资源争抢或超售过度。
+    evidence_types: ["cgroup_contention", "syscall_latency"]
+    metric_patterns:
+      - metric_name: "cpu_steal_percent"
+        operator: ">"
+        threshold: 10.0
+        description: "CPU steal time超过10%"
+      - metric_name: "cpu_iowait_percent"
+        operator: ">"
+        threshold: 20.0
+        description: "CPU iowait超过20%"
+    skills:
+      - skill_id: "check_cpu_steal"
+        name: "检查CPU steal time"
+        description: "通过/proc/stat计算steal time占比"
+        required_evidence: ["cgroup_contention"]
+        check_method: !ThresholdCheck
+          metric: "cpu_steal_percent"
+          operator: ">"
+          threshold: 10.0
+        metrics: ["cpu_steal_percent", "cpu_user_percent", "cpu_system_percent"]
+    root_causes:
+      - description: "宿主机CPU超售过度"
+        confidence: 0.8
+        verification: "查看宿主机vCPU与物理CPU配比"
+      - description: "宿主机其他VM占用CPU过多"
+        confidence: 0.7
+        verification: "宿主机层面检查其他VM的CPU使用情况"
+    remediation:
+      - step: 1
+        action: "联系宿主机管理员检查资源分配"
+        expected_outcome: "steal time下降至正常水平"
+        risk: null
+      - step: 2
+        action: "考虑迁移到其他宿主机节点"
+        expected_outcome: "避开资源争抢节点"
+        risk: "可能短暂中断"
+    references: 
+      - "https://gitcode.com/wenjunryou/witty-ops-cases/cpu-steal"
+    severity: 7
+    confidence: 0.85
+
+  # ========== Memory类 (扩展) ==========
+  - case_id: "euler-memory-leak-001"
+    title: "容器内存泄漏渐进式增长"
+    description: |
+      容器内存使用量随时间线性增长，重启后恢复正常，
+      典型的内存泄漏特征，可能导致渐进式性能下降。
+    evidence_types: ["cgroup_contention", "syscall_latency"]
+    metric_patterns:
+      - metric_name: "memory_growth_rate_bytes_per_hour"
+        operator: ">"
+        threshold: 104857600
+        description: "内存增长速度超过100MB/小时"
+      - metric_name: "memory_usage_percent"
+        operator: ">"
+        threshold: 80.0
+        description: "内存使用率超过80%"
+    skills:
+      - skill_id: "detect_memory_leak"
+        name: "检测内存泄漏趋势"
+        description: "分析内存使用趋势，识别泄漏模式"
+        required_evidence: ["cgroup_contention"]
+        check_method: !TrendAnalysis
+          metric: "memory_usage_bytes"
+          window_secs: 3600
+          trend_type: "increasing"
+        metrics: ["memory_usage_bytes", "rss_bytes", "cache_bytes"]
+      - skill_id: "check_malloc_calls"
+        name: "分析内存分配调用"
+        description: "跟踪malloc/free调用比例"
+        required_evidence: ["syscall_latency"]
+        check_method: !PatternMatch
+          pattern: "malloc_without_free"
+        metrics: ["malloc_count", "free_count"]
+    root_causes:
+      - description: "应用程序内存泄漏"
+        confidence: 0.85
+        verification: "对比不同时间点的内存profile"
+      - description: "缓存未设置过期策略"
+        confidence: 0.6
+        verification: "检查应用缓存配置"
+    remediation:
+      - step: 1
+        action: "生成内存profile分析泄漏源"
+        expected_outcome: "定位到具体代码位置"
+        risk: "性能开销"
+      - step: 2
+        action: "修复代码并重新部署"
+        expected_outcome: "内存增长趋势停止"
+        risk: null
+    references:
+      - "https://gitcode.com/wenjunryou/witty-ops-cases/memory-leak"
+    severity: 6
+    confidence: 0.8
+
+  # ========== Network类 (扩展) ==========
+  - case_id: "euler-network-conntrack-001"
+    title: "conntrack表满导致连接失败"
+    description: |
+      nf_conntrack表达到上限，导致新连接无法建立，
+      常见于高并发短连接场景或conntrack配置过小。
+    evidence_types: ["network", "cgroup_contention"]
+    metric_patterns:
+      - metric_name: "conntrack_usage_percent"
+        operator: ">"
+        threshold: 90.0
+        description: "conntrack表使用率超过90%"
+      - metric_name: "connection_failure_rate"
+        operator: ">"
+        threshold: 5.0
+        description: "连接失败率超过5%"
+    skills:
+      - skill_id: "check_conntrack_usage"
+        name: "检查conntrack表使用"
+        description: "检查/proc/sys/net/netfilter/nf_conntrack_count"
+        required_evidence: ["network"]
+        check_method: !ThresholdCheck
+          metric: "conntrack_count"
+          operator: ">"
+          threshold: 60000
+        metrics: ["conntrack_count", "conntrack_max"]
+    root_causes:
+      - description: "conntrack表配置过小"
+        confidence: 0.75
+        verification: "检查nf_conntrack_max配置"
+      - description: "短连接过多导致表项堆积"
+        confidence: 0.7
+        verification: "分析conntrack状态分布"
+    remediation:
+      - step: 1
+        action: "临时增加conntrack_max值"
+        expected_outcome: "新连接可以建立"
+        risk: "内存使用增加"
+      - step: 2
+        action: "调整conntrack超时参数或优化应用连接复用"
+        expected_outcome: "表项回收加快，长期稳定"
+        risk: null
+    references:
+      - "https://gitcode.com/wenjunryou/witty-ops-cases/conntrack-full"
+    severity: 8
+    confidence: 0.85
+
+  # ========== Storage类 (扩展) ==========
+  - case_id: "euler-io-hang-001"
+    title: "存储I/O Hang导致进程D状态"
+    description: |
+      存储设备响应超时，进程陷入不可中断睡眠(D状态)，
+      通常是存储设备故障或存储网络中断导致。
+    evidence_types: ["block_io", "fs_stall", "cgroup_contention"]
+    metric_patterns:
+      - metric_name: "d_state_process_count"
+        operator: ">"
+        threshold: 5.0
+        description: "D状态进程数超过5个"
+      - metric_name: "io_pending_seconds"
+        operator: ">"
+        threshold: 30.0
+        description: "I/O pending超过30秒"
+    skills:
+      - skill_id: "detect_d_state_processes"
+        name: "检测D状态进程"
+        description: "扫描所有进程状态，识别D状态"
+        required_evidence: ["cgroup_contention"]
+        check_method: !PatternMatch
+          pattern: "state_D"
+        metrics: ["d_state_count", "process_states"]
+      - skill_id: "check_io_hang"
+        name: "检查I/O hang"
+        description: "跟踪I/O请求pending时间"
+        required_evidence: ["block_io"]
+        check_method: !ThresholdCheck
+          metric: "io_pending_duration_ms"
+          operator: ">"
+          threshold: 30000
+        metrics: ["io_pending_duration_ms", "io_queue_depth"]
+    root_causes:
+      - description: "存储设备故障或脱机"
+        confidence: 0.85
+        verification: "检查存储设备状态和日志"
+      - description: "存储网络链路中断(iSCSI/FC)"
+        confidence: 0.75
+        verification: "检查SAN交换机或网络连通性"
+    remediation:
+      - step: 1
+        action: "识别并隔离故障存储设备"
+        expected_outcome: "恢复对其他设备的访问"
+        risk: "可能丢失部分数据"
+      - step: 2
+        action: "联系存储管理员恢复服务"
+        expected_outcome: "存储服务完全恢复"
+        risk: null
+    references:
+      - "https://gitcode.com/wenjunryou/witty-ops-cases/io-hang"
+    severity: 10
+    confidence: 0.9
+
+  # ========== System类 (新增) ==========
+  - case_id: "euler-kernel-hungtask-001"
+    title: "Kernel Hung Task Warning"
+    description: |
+      内核检测到任务超过120秒未调度，触发hung task警告，
+      通常是I/O子系统或锁竞争导致。
+    evidence_types: ["block_io", "fs_stall", "cgroup_contention"]
+    metric_patterns:
+      - metric_name: "hung_task_count"
+        operator: ">"
+        threshold: 1.0
+        description: "检测到hung task"
+    skills:
+      - skill_id: "detect_hung_tasks"
+        name: "检测hung task"
+        description: "监控dmesg中的hung task警告"
+        required_evidence: ["cgroup_contention"]
+        check_method: !PatternMatch
+          pattern: "hung_task"
+        metrics: ["hung_task_count", "task_stack_traces"]
+    root_causes:
+      - description: "存储I/O设备无响应"
+        confidence: 0.8
+        verification: "检查I/O设备状态"
+      - description: "内核锁竞争或死锁"
+        confidence: 0.6
+        verification: "分析task stack trace"
+    remediation:
+      - step: 1
+        action: "收集vmcore或task stack trace"
+        expected_outcome: "定位到阻塞位置"
+        risk: "性能开销"
+      - step: 2
+        action: "根据分析结果修复驱动或配置"
+        expected_outcome: "消除hung task"
+        risk: null
+    references:
+      - "https://gitcode.com/wenjunryou/witty-ops-cases/kernel-hung-task"
+    severity: 9
+    confidence: 0.85
+
+# 证据类型到采集技能的映射表
+evidence_to_skills:
+  block_io:
+    - block_io_latency_analysis
+    - io_queue_depth_check
+    - device_throughput_analysis
+  network:
+    - tcp_connection_analysis
+    - packet_loss_detection
+    - dns_latency_check
+    - conntrack_analysis
+  cgroup_contention:
+    - cpu_throttle_analysis
+    - memory_pressure_check
+    - io_throttle_detection
+  syscall_latency:
+    - syscall_frequency_analysis
+    - syscall_duration_distribution
+    - blocking_syscall_detection
+  fs_stall:
+    - filesystem_operation_latency
+    - vfs_layer_analysis
+  oom_events:
+    - oom_kill_detection
+    - memory_oom_score_analysis
+
+# 常用指标阈值参考
+metric_thresholds:
+  cpu_throttle_ratio: { warning: 5, critical: 20 }
+  memory_usage_percent: { warning: 80, critical: 95 }
+  latency_p99_ms: { warning: 50, critical: 100 }
+  io_latency_p99_ms: { warning: 20, critical: 100 }
+  packet_loss_rate: { warning: 0.1, critical: 1.0 }
+  retransmit_rate: { warning: 1, critical: 5 }
+  syscall_latency_p99_ms: { warning: 10, critical: 50 }
+  fs_stall_p99_ms: { warning: 100, critical: 500 }

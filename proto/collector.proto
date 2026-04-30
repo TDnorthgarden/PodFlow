@@ -1,0 +1,104 @@
+syntax = "proto3";
+package nuts.collector;
+
+// 采集请求
+message CollectRequest {
+    string task_id = 1;              // 任务ID（用于追踪）
+    string script_path = 2;          // bpftrace脚本路径
+    string script_content = 3;       // 脚本内容（可选，优先于script_path）
+    uint64 duration_secs = 4;        // 采集时长
+    optional uint32 scope_pid = 5;   // 目标进程PID（可选）
+    optional string cgroup_id = 6;   // 目标cgroup（可选）
+    string evidence_type = 7;        // 证据类型
+    map<string, string> params = 8;  // 额外参数
+}
+
+// 采集响应
+message CollectResponse {
+    string collection_id = 1;       // 采集ID
+    bytes raw_output = 2;           // 原始输出（JSON Lines）
+    uint64 duration_ms = 3;         // 实际耗时
+    string status = 4;              // 状态: success, timeout, error, cancelled
+    optional string error_msg = 5;  // 错误信息
+    uint32 event_count = 6;         // 采集到的事件数
+    uint64 bytes_collected = 7;     // 采集到的字节数
+}
+
+// /proc读取请求
+message ReadProcRequest {
+    string task_id = 1;             // 任务ID
+    string path = 2;                // /proc/下的路径，如 "1234/maps"
+    optional uint32 pid = 3;        // 目标PID
+    bool follow_symlink = 4;        // 是否跟随符号链接
+}
+
+message ReadProcResponse {
+    bytes content = 1;              // 文件内容
+    bool exists = 2;                // 文件是否存在
+    optional string error_msg = 3;  // 错误信息
+}
+
+// 取消采集请求
+message CancelRequest {
+    string collection_id = 1;       // 要取消的采集ID
+    string reason = 2;              // 取消原因
+}
+
+message CancelResponse {
+    bool success = 1;               // 是否成功取消
+    string status = 2;              // 取消后的状态
+}
+
+// 健康检查请求
+message HealthRequest {
+    bool include_stats = 1;         // 是否包含统计信息
+}
+
+message HealthResponse {
+    bool healthy = 1;               // 是否健康
+    string version = 2;             // 版本号
+    uint32 active_collections = 3;  // 当前活跃采集数
+    uint64 total_collections = 4;   // 总采集次数
+    uint64 uptime_secs = 5;         // 运行时长（秒）
+    string socket_path = 6;         // 监听地址
+    repeated string capabilities = 7; // 当前拥有的capabilities
+}
+
+// 采集器统计信息
+message CollectorStats {
+    uint64 total_requests = 1;
+    uint64 success_count = 2;
+    uint64 error_count = 3;
+    uint64 timeout_count = 4;
+    map<string, uint64> evidence_type_counts = 5;  // 按证据类型统计
+    uint64 bytes_collected_total = 6;
+}
+
+// 权限检查请求
+message PermissionCheckRequest {
+    uint32 uid = 1;                 // 要检查的UID
+}
+
+message PermissionCheckResponse {
+    bool allowed = 1;             // 是否允许访问
+    repeated string granted_permissions = 2;  // 授予的权限
+    string message = 3;             // 提示信息
+}
+
+// 服务定义
+service Collector {
+    // 执行bpftrace采集
+    rpc CollectBpftrace(CollectRequest) returns (CollectResponse);
+    
+    // 读取/proc文件
+    rpc ReadProc(ReadProcRequest) returns (ReadProcResponse);
+    
+    // 取消正在进行的采集
+    rpc CancelCollection(CancelRequest) returns (CancelResponse);
+    
+    // 健康检查
+    rpc Health(HealthRequest) returns (HealthResponse);
+    
+    // 检查权限
+    rpc CheckPermission(PermissionCheckRequest) returns (PermissionCheckResponse);
+}

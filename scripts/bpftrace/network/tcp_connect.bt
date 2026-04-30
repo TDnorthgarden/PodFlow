@@ -1,0 +1,101 @@
+#!/usr/bin/env bpftrace
+
+/*
+ * Network TCP Connect Latency Probe
+ * 第 1 周 PoC - 采集 TCP 三次握手延迟
+ * 
+ * 输出格式: @start[tid, pid] = nsecs 记录 SYN 发送时间
+ *           @synack[tid, pid] = nsecs 记录 SYN-ACK 接收时间
+ *           @handshake_latency[pid, comm] = latency_us 记录成功握手延迟
+ * 
+ * 对应 docs/08_collector_bpftrace_to_fields.md 4.1 节 raw 事件要求
+ */
+
+#include <net/sock.h>
+
+BEGIN
+{
+    printf("{\"type\":\"start\",\"msg\":\"tcp_connect_probe started\"}\n");
+}
+
+// 跟踪 TCP 连接发起（客户端 SYN）
+kprobe:tcp_v4_connect,
+kprobe:tcp_v6_connect
+{
+    $sk = (struct sock *)arg0;
+    $tid = tid;
+    $pid = pid;
+    
+    // 记录 SYN 发送时间
+    @start[$tid, $pid] = nsecs;
+    @syn_ts[$tid, $pid] = nsecs;
+}
+
+// 跟踪收到 SYN-ACK（服务器响应）
+kprobe:tcp_rcv_state_process
+/	arg1 == 1 || arg1 == 6 || arg1 == 7 /  // TCP_SYN_SENT, TCP_SYN_RECV, TCP_ESTABLISHED states
+{
+    $tid = tid;
+    $pid = pid;
+    
+    // 检查是否有对应的 start 记录
+    if (@start[$tid, $pid] != 0) {
+        @synack[$tid, $pid] = nsecs;
+    }
+}
+
+// 跟踪连接完成（客户端 ACK 发出后进入 ESTABLISHED）
+kprobe:tcp_finish_connect
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = comm;
+    
+    $syn_ts = @syn_ts[$tid, $pid];
+    
+    if ($syn_ts != 0) {
+        $latency_us = (nsecs - $syn_ts) / 1000;
+        @handshake_latency[$pid, $comm] = $latency_us;
+        
+        // 输出单个成功连接事件（供 collector 解析）
+        printf("{\"type\":\"tcp_connect\",\"pid\":%d,\"comm\":\"%s\",\"latency_us\":%llu,\"ts_ms\":%llu}\n",
+            $pid, $comm, $latency_us, nsecs / 1000000);
+        
+        delete(@start[$tid, $pid]);
+        delete(@syn_ts[$tid, $pid]);
+        delete(@synack[$tid, $pid]);
+    }
+}
+
+// 跟踪连接重置/失败
+kprobe:tcp_reset
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = comm;
+    
+    if (@start[$tid, $pid] != 0) {
+        printf("{\"type\":\"tcp_reset\",\"pid\":%d,\"comm\":\"%s\",\"ts_ms\":%llu}\n",
+            $pid, $comm, nsecs / 1000000);
+        
+        delete(@start[$tid, $pid]);
+        delete(@syn_ts[$tid, $pid]);
+        delete(@synack[$tid, $pid]);
+    }
+}
+
+// 定时输出聚合统计（每 5 秒）
+interval:s:5
+{
+    printf("{\"type\":\"stats\",\"handshake_count\":%d}\n", count(@handshake_latency));
+    clear(@handshake_latency);
+}
+
+END
+{
+    printf("{\"type\":\"end\",\"msg\":\"tcp_connect_probe stopped\"}\n");
+    clear(@start);
+    clear(@syn_ts);
+    clear(@synack);
+    clear(@handshake_latency);
+}

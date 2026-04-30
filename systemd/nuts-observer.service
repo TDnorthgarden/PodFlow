@@ -1,0 +1,61 @@
+[Unit]
+Description=Nuts Observer (Diagnosis HTTP API Server)
+After=network.target nuts-collector-daemon.service
+Wants=nuts-collector-daemon.service
+Documentation=https://github.com/yourorg/nuts-observer
+
+[Service]
+Type=simple
+User=nuts
+Group=nuts
+
+# 启动命令
+ExecStart=/usr/bin/nuts-observer
+ExecReload=/bin/kill -HUP $MAINPID
+
+# 重启策略
+Restart=always
+RestartSec=5
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# 安全加固 — 非特权服务，严格沙箱
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+
+# 允许读写的路径
+ReadWritePaths=/var/log/nuts /run/nuts
+ReadOnlyPaths=/etc/nuts
+
+# 命名空间隔离
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelLogs=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+NoNewPrivileges=true
+
+# 资源限制
+LimitNOFILE=65536
+MemoryMax=1G
+CPUQuota=100%
+TasksMax=2048
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nuts-observer
+
+# 环境变量
+Environment=RUST_LOG=info
+Environment=LANG=en_US.UTF-8
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,159 @@
+#!/usr/bin/env bpftrace
+/*
+ * Nuts-Observer Standard Cgroup Contention Probe
+ * 标准Cgroup资源争用采集脚本 - 符合 bpftrace_output_standard v0.1
+ * 
+ * Evidence Type: cgroup_contention
+ * Key Metrics: cpu_throttled_us, memory_pressure, io_wait
+ * 
+ * 输出格式: JSON Lines
+ */
+
+#include <linux/cgroup.h>
+#include <linux/sched.h>
+
+BEGIN
+{
+    printf("{\"type\":\"start\",\"msg\":\"cgroup_contention probe started\",\"probe_id\":\"cgroup.contention\",\"version\":\"v0.1\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+}
+
+// 跟踪CPU throttle事件
+tracepoint:sched:sched_stat_throttled
+{
+    $pid = args->pid;
+    $comm = args->comm;
+    $throttled_us = args->throttled_time / 1000;  // 转换为微秒
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"cpu_throttle\",\"pid\":%d,\"comm\":\"%s\",\"throttled_us\":%llu,\"ts_ms\":%llu}\n",
+        $pid, $comm, $throttled_us, $ts_ms);
+    
+    @throttle_events = count();
+    @throttle_time_total = sum($throttled_us);
+}
+
+// 跟踪内存压力事件 (通过OOM killer触发前)
+tracepoint:oom:mark_victim
+{
+    $pid = args->pid;
+    $comm = args->comm;
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"oom_victim\",\"pid\":%d,\"comm\":\"%s\",\"reason\":\"oom_kill\",\"ts_ms\":%llu}\n",
+        $pid, $comm, $ts_ms);
+    
+    @oom_victims = count();
+}
+
+// 跟踪cgroup内存压力 (memory.pressure)
+// 注意: 实际实现可能需要读取/sys/fs/cgroup/下的文件
+// 这里使用page reclaim作为内存压力的代理指标
+tracepoint:mm_vmscan_direct_reclaim_begin
+{
+    $pid = pid;
+    $comm = comm;
+    $ts_ms = nsecs / 1000000;
+    $order = args->order;
+    
+    @reclaim_start[$pid] = nsecs;
+    
+    printf("{\"type\":\"memory_reclaim_start\",\"pid\":%d,\"comm\":\"%s\",\"order\":%d,\"ts_ms\":%llu}\n",
+        $pid, $comm, $order, $ts_ms);
+}
+
+tracepoint:mm_vmscan_direct_reclaim_end
+/@reclaim_start[pid] != 0/
+{
+    $pid = pid;
+    $comm = comm;
+    $reclaim_us = (nsecs - @reclaim_start[$pid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"memory_reclaim_end\",\"pid\":%d,\"comm\":\"%s\",\"reclaim_us\":%llu,\"ts_ms\":%llu}\n",
+        $pid, $comm, $reclaim_us, $ts_ms);
+    
+    @reclaim_time_total = sum($reclaim_us);
+    delete(@reclaim_start[$pid]);
+}
+
+// 跟踪I/O等待时间 (iowait统计)
+tracepoint:power:cpu_idle
+/args->state == 2/  // C2 state通常与I/O等待相关
+{
+    $cpu = args->cpu_id;
+    @idle_start[$cpu] = nsecs;
+}
+
+tracepoint:power:cpu_idle /(@idle_start[args->cpu_id] != 0 && args->state != 2)/
+{
+    $cpu = args->cpu_id;
+    $idle_us = (nsecs - @idle_start[$cpu]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    
+    // 只记录较长的idle，可能表示I/O等待
+    if ($idle_us > 10000) {  // > 10ms
+        printf("{\"type\":\"io_wait\",\"cpu\":%d,\"wait_us\":%llu,\"ts_ms\":%llu}\n",
+            $cpu, $idle_us, $ts_ms);
+    }
+    
+    delete(@idle_start[$cpu]);
+}
+
+// 跟踪进程被schedule-out的时间 (作为调度延迟代理)
+tracepoint:sched:sched_switch
+{
+    $prev_pid = args->prev_pid;
+    $next_pid = args->next_pid;
+    
+    @last_sched_out[$prev_pid] = nsecs;
+}
+
+tracepoint:sched:sched_wakeup
+/@last_sched_out[args->pid] != 0/
+{
+    $pid = args->pid;
+    $comm = args->comm;
+    $wait_us = (nsecs - @last_sched_out[$pid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    
+    // 记录较长的调度等待
+    if ($wait_us > 5000) {  // > 5ms
+        printf("{\"type\":\"sched_latency\",\"pid\":%d,\"comm\":\"%s\",\"wait_us\":%llu,\"ts_ms\":%llu}\n",
+            $pid, $comm, $wait_us, $ts_ms);
+        @sched_latency_hist = hist($wait_us);
+    }
+    
+    delete(@last_sched_out[$pid]);
+}
+
+// 定期输出聚合统计
+interval:s:5
+{
+    $ts_ms = nsecs / 1000000;
+    $throttle_count = count(@throttle_events);
+    $oom_count = count(@oom_victims);
+    $total_reclaim_time = sum(@reclaim_time_total);
+    
+    printf("{\"type\":\"stats\",\"ts_ms\":%llu,\"cpu_throttle_count\":%llu,\"oom_victims\":%llu,\"reclaim_time_total_us\":%llu}\n",
+        $ts_ms, $throttle_count, $oom_count, $total_reclaim_time);
+    
+    // 打印调度延迟直方图
+    print(@sched_latency_hist, 5);
+    clear(@sched_latency_hist);
+}
+
+END
+{
+    printf("{\"type\":\"end\",\"msg\":\"cgroup_contention probe stopped\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+    
+    clear(@throttle_events);
+    clear(@throttle_time_total);
+    clear(@oom_victims);
+    clear(@reclaim_start);
+    clear(@reclaim_time_total);
+    clear(@idle_start);
+    clear(@last_sched_out);
+    clear(@sched_latency_hist);
+}

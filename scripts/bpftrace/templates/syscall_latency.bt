@@ -1,0 +1,159 @@
+#!/usr/bin/env bpftrace
+/*
+ * Nuts-Observer Standard Syscall Latency Probe
+ * 标准系统调用延迟采集脚本 - 符合 bpftrace_output_standard v0.1
+ * 
+ * Evidence Type: syscall_latency
+ * Key Metrics: syscall_id, duration_us, syscall_name
+ * 
+ * 输出格式: JSON Lines
+ */
+
+#include <linux/syscalls.h>
+
+BEGIN
+{
+    printf("{\"type\":\"start\",\"msg\":\"syscall_latency probe started\",\"probe_id\":\"syscall.latency\",\"version\":\"v0.1\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+}
+
+// 跟踪系统调用入口
+tracepoint:raw_syscalls:sys_enter
+{
+    $tid = tid;
+    $syscall_id = args->id;
+    
+    @syscall_start[$tid] = nsecs;
+    @syscall_id[$tid] = $syscall_id;
+}
+
+// 跟踪系统调用出口
+tracepoint:raw_syscalls:sys_exit
+/@syscall_start[tid] != 0/
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = comm;
+    $syscall_id = @syscall_id[$tid];
+    $duration_us = (nsecs - @syscall_start[$tid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    $ret = args->ret;
+    
+    // 只记录慢系统调用 (>100us)
+    if ($duration_us > 100) {
+        printf("{\"type\":\"syscall_exit\",\"pid\":%d,\"comm\":\"%s\",\"syscall_id\":%d,\"duration_us\":%llu,\"ret\":%d,\"ts_ms\":%llu}\n",
+            $pid, $comm, $syscall_id, $duration_us, $ret, $ts_ms);
+        
+        // 按syscall_id聚合
+        @slow_syscalls[$syscall_id] = count();
+        @syscall_latency_hist = hist($duration_us);
+    }
+    
+    delete(@syscall_start[$tid]);
+    delete(@syscall_id[$tid]);
+}
+
+// 跟踪特定慢系统调用
+// 跟踪阻塞I/O相关的系统调用
+kprobe:do_wait
+{
+    $pid = pid;
+    $comm = comm;
+    
+    @wait_start[$pid] = nsecs;
+}
+
+kretprobe:do_wait
+/@wait_start[pid] != 0/
+{
+    $pid = pid;
+    $comm = comm;
+    $duration_us = (nsecs - @wait_start[$pid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"wait_syscall\",\"pid\":%d,\"comm\":\"%s\",\"duration_us\":%llu,\"ts_ms\":%llu}\n",
+        $pid, $comm, $duration_us, $ts_ms);
+    
+    delete(@wait_start[$pid]);
+}
+
+// 跟踪文件系统操作
+kprobe:vfs_read,
+kprobe:vfs_write
+{
+    $pid = pid;
+    
+    @fs_start[$pid] = nsecs;
+}
+
+kretprobe:vfs_read,
+kretprobe:vfs_write
+/@fs_start[pid] != 0/
+{
+    $pid = pid;
+    $comm = comm;
+    $duration_us = (nsecs - @fs_start[$pid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    
+    if ($duration_us > 500) {  // > 500us
+        printf("{\"type\":\"fs_syscall\",\"pid\":%d,\"comm\":\"%s\",\"duration_us\":%llu,\"ts_ms\":%llu}\n",
+            $pid, $comm, $duration_us, $ts_ms);
+    }
+    
+    delete(@fs_start[$pid]);
+}
+
+// 跟踪锁相关系统调用 (futex)
+kprobe:do_futex
+{
+    $tid = tid;
+    @futex_start[$tid] = nsecs;
+}
+
+kretprobe:do_futex
+/@futex_start[tid] != 0/
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = comm;
+    $duration_us = (nsecs - @futex_start[$tid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    
+    if ($duration_us > 1000) {  // > 1ms
+        printf("{\"type\":\"futex_syscall\",\"pid\":%d,\"comm\":\"%s\",\"duration_us\":%llu,\"ts_ms\":%llu}\n",
+            $pid, $comm, $duration_us, $ts_ms);
+    }
+    
+    delete(@futex_start[$tid]);
+}
+
+// 定期输出聚合统计
+interval:s:5
+{
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"stats\",\"ts_ms\":%llu}\n", $ts_ms);
+    
+    // 打印慢系统调用直方图
+    print(@syscall_latency_hist, 5);
+    
+    // 打印各系统调用的慢调用次数
+    print(@slow_syscalls, 5);
+    
+    clear(@syscall_latency_hist);
+    clear(@slow_syscalls);
+}
+
+END
+{
+    printf("{\"type\":\"end\",\"msg\":\"syscall_latency probe stopped\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+    
+    clear(@syscall_start);
+    clear(@syscall_id);
+    clear(@wait_start);
+    clear(@fs_start);
+    clear(@futex_start);
+    clear(@slow_syscalls);
+    clear(@syscall_latency_hist);
+}
