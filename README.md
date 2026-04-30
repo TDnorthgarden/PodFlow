@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
+[![Build Status](https://img.shields.io/badge/build-manual-orange)]()
 
 Nuts Observer 是一个面向容器环境的智能故障诊断插件，基于 eBPF/bpftrace 采集内核级观测数据，通过规则引擎和 AI 增强生成诊断结论，并支持告警推送。
 
@@ -25,8 +25,8 @@ Nuts Observer 是一个面向容器环境的智能故障诊断插件，基于 eB
 | 系统调用耗时统计 | Top N 系统调用延迟分析 | ✅ |
 | cgroup 资源争抢检测 | CPU/内存/IO 资源争用分析 | ✅ |
 | OOM 事件自动检测 | 自动触发诊断并扩大采集范围 | ✅ |
-| AI 增强诊断 | 支持多种 AI 模型增强诊断结论 | ✅ |
-| 告警平台集成 | 结构化日志输出 + 告警推送 | ✅ |
+| AI 增强诊断 | 支持多种 AI 模型增强诊断结论 | 🚧 (70%) |
+| 告警平台集成 | 结构化日志输出 + 告警推送 | 🚧 (65%) |
 | NRI 集成 | 支持 Kubernetes NRI 协议 | ✅ |
 
 ## 🚀 快速开始
@@ -56,8 +56,8 @@ sudo dnf install -y bpftrace curl gcc make openssl-devel
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-username/nuts-observer.git
-cd nuts-observer
+git clone https://github.com/TDnorthgarden/PodFlow.git
+cd PodFlow
 
 # 编译项目
 cargo build --release
@@ -75,7 +75,7 @@ sudo chmod -R 755 /usr/share/nuts/bpftrace
 sudo ./target/release/nuts-observer
 
 # 在另一个终端使用 CLI
-./target/release/nuts-observer-cli trigger --target pod:nginx --evidence-types network,block_io
+./target/release/nuts-observer-cli -s http://localhost:8080 trigger --cgroup-id <cgroup-id> --evidence-types network,block_io
 ```
 
 ## 🏗️ 架构设计
@@ -253,21 +253,24 @@ curl "http://localhost:8080/v1/diagnostics/<task-id>"
 ./target/release/nuts-observer-cli --help
 
 # 触发诊断
-./target/release/nuts-observer-cli trigger \
-  --target pod:nginx \
-  --namespace default \
+./target/release/nuts-observer-cli -s http://localhost:8080 trigger \
+  --cgroup-id <cgroup-id> \
   --evidence-types network,block_io
 
-# 查询结果
-./target/release/nuts-observer-cli query --task-id <task-id>
+# 查询 AI 增强结果（使用诊断 ID）
+./target/release/nuts-observer-cli -s http://localhost:8080 query --diagnosis-id <diagnosis-id>
 
-# 实时监控
-./target/release/nuts-observer-cli watch --target pod:nginx --interval 10
+# 查看服务状态
+./target/release/nuts-observer-cli -s http://localhost:8080 status
 ```
 
-## 🐳 容器化部署
+## 🐳 容器化部署（计划中）
+
+> **⚠️ 注意**: Docker 支持正在开发中，以下 Dockerfile 为参考示例。
 
 ### 构建镜像
+
+创建 `Dockerfile`：
 
 ```dockerfile
 FROM rust:1.70 as builder
@@ -283,6 +286,13 @@ COPY --from=builder /app/scripts/bpftrace /usr/share/nuts/bpftrace
 COPY config.yaml /etc/nuts/config.yaml
 EXPOSE 8080
 CMD ["nuts-observer"]
+```
+
+构建并运行：
+
+```bash
+docker build -t nuts-observer:latest .
+docker run -d --name nuts-observer --privileged --pid=host -p 8080:8080 nuts-observer:latest
 ```
 
 ### 运行容器
@@ -332,6 +342,12 @@ sudo systemctl start nuts-collector-daemon nuts-observer
 | `fs_stall` | 文件系统卡顿分析 | `stall_duration_ms`, `operation_type`, `file_path` |
 | `cgroup_contention` | cgroup 资源争抢 | `cpu_throttle_rate`, `memory_usage_percent`, `io_wait_time` |
 | `oom` | OOM 事件检测 | `oom_time`, `victim_pid`, `memory_usage_before` |
+
+> **⚠️ 开发阶段声明**  
+> 本项目处于积极开发阶段（v0.1.0），部分功能尚未达到生产就绪状态。  
+> 预计生产就绪时间：3-4 周
+
+---
 
 ## 🤖 AI 增强功能
 
@@ -383,11 +399,11 @@ ai:
 项目内置 openEuler 社区常见故障模式：
 
 ```bash
-# 查看所有案例
-./target/release/nuts-observer-cli case list
+# 查看所有案例（开发中）
+# ./target/release/nuts-observer-cli case list
 
-# 匹配当前状态
-./target/release/nuts-observer-cli case match --target pod:nginx
+# 匹配当前状态（开发中）
+# ./target/release/nuts-observer-cli case match --target pod:nginx
 ```
 
 内置案例包括：
@@ -502,9 +518,9 @@ cargo clippy
 
 ## 📞 联系方式
 
-- **项目主页**: [https://github.com/your-username/nuts-observer](https://github.com/your-username/nuts-observer)
-- **问题反馈**: [GitHub Issues](https://github.com/your-username/nuts-observer/issues)
-- **文档**: [项目 Wiki](https://github.com/your-username/nuts-observer/wiki)
+- **项目主页**: [https://github.com/TDnorthgarden/PodFlow](https://github.com/TDnorthgarden/PodFlow)
+- **问题反馈**: [GitHub Issues](https://github.com/TDnorthgarden/PodFlow/issues)
+- **文档**: [项目 Wiki](https://github.com/TDnorthgarden/PodFlow/wiki)
 
 ## 🙏 致谢
 
