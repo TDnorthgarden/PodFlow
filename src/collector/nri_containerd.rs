@@ -165,6 +165,82 @@ impl Default for ContainerdNriConfig {
     }
 }
 
+impl ContainerdNriConfig {
+    /// 从环境变量创建配置
+    /// 支持的环境变量：
+    /// - NUTS_NRI_SOCKET_PATH: Unix Socket 路径
+    /// - NUTS_NRI_PLUGIN_NAME: 插件名称
+    /// - NUTS_NRI_PLUGIN_IDX: 插件索引 (00-99)
+    /// - NUTS_NRI_VERSION: NRI 协议版本
+    /// - NUTS_NRI_AUTO_REGISTER: 是否自动注册 (true/false)
+    /// - NUTS_NRI_RUNTIME_SOCKET: containerd NRI 套接字路径
+    pub fn from_env() -> Result<Self, ConfigValidationError> {
+        use std::env;
+        
+        let mut config = Self::default();
+        
+        // 从环境变量读取基本配置
+        if let Ok(val) = env::var("NUTS_NRI_SOCKET_PATH") {
+            if !val.is_empty() {
+                config.socket_path = val;
+            }
+        }
+        
+        if let Ok(val) = env::var("NUTS_NRI_PLUGIN_NAME") {
+            if !val.is_empty() {
+                config.plugin_name = val;
+            }
+        }
+        
+        if let Ok(val) = env::var("NUTS_NRI_PLUGIN_IDX") {
+            if !val.is_empty() {
+                config.plugin_idx = val;
+            }
+        }
+        
+        if let Ok(val) = env::var("NUTS_NRI_VERSION") {
+            if !val.is_empty() {
+                config.nri_version = val;
+            }
+        }
+        
+        if let Ok(val) = env::var("NUTS_NRI_AUTO_REGISTER") {
+            config.auto_register = val.parse().unwrap_or(true);
+        }
+        
+        if let Ok(val) = env::var("NUTS_NRI_RUNTIME_SOCKET") {
+            if !val.is_empty() {
+                config.runtime_socket_path = val;
+            }
+        }
+        
+        info!("[ContainerdNri] Configuration loaded from environment variables");
+        
+        // 验证配置
+        config.validate()?;
+        
+        Ok(config)
+    }
+    
+    /// 创建配置（优先从环境变量读取，失败则使用默认值）
+    pub fn from_env_or_default() -> Self {
+        match Self::from_env() {
+            Ok(config) => {
+                info!("[ContainerdNri] Using configuration from environment");
+                config
+            }
+            Err(e) => {
+                warn!("[ContainerdNri] Failed to load from environment ({}), using defaults", e);
+                let config = Self::default();
+                if let Err(e) = config.validate() {
+                    error!("[ContainerdNri] Default config validation failed: {}", e);
+                }
+                config
+            }
+        }
+    }
+}
+
 /// 配置验证错误
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigValidationError {
