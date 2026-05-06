@@ -124,15 +124,17 @@ async fn run_server() {
     {
         let (nri_event_tx, mut nri_event_rx) = mpsc::channel::<NriEvent>(1000);
 
-        // 创建并启动 containerd NRI 插件服务
-        let containerd_nri_config = ContainerdNriConfig {
-            socket_path: "/var/run/nri/nuts-observer.sock".to_string(),
-            plugin_name: "nuts-observer".to_string(),
-            plugin_idx: "00".to_string(),
-            nri_version: "1.0.0".to_string(),
-            auto_register: true,
-            runtime_socket_path: "/var/run/nri/nri.sock".to_string(),
-        };
+        // 从环境变量加载 NRI 配置（带验证）
+        let containerd_nri_config = ContainerdNriConfig::from_env_or_default();
+        
+        // 记录最终配置
+        tracing::info!(
+            "[ContainerdNri] Config: socket={}, plugin={}.{}, auto_register={}",
+            containerd_nri_config.socket_path,
+            containerd_nri_config.plugin_name,
+            containerd_nri_config.plugin_idx,
+            containerd_nri_config.auto_register
+        );
 
         // 获取 NRI V3 的映射表用于 containerd NRI 服务
         let nri_v3_table = Arc::clone(&nri_v3.table());
