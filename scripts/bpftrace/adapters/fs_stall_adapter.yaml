@@ -1,0 +1,62 @@
+# Filesystem Stall 适配器配置
+# 用于将 fs_stall.bt 脚本输出转换为标准证据格式
+
+adapter_id: fs_stall
+version: v0.1
+source_type: bpftrace_output
+evidence_type: fs_stall
+
+# 源数据格式匹配模式
+# fs_stall.bt 脚本输出的 JSON Lines 格式
+source_pattern: '\{"type":"(?<event_type>[^"]+)","pid":(?<pid>\d+),"comm":"(?<comm>[^"]+)","fs_op":"(?<fs_op>[^"]+)","syscall_name":"(?<syscall_name>[^"]+)","duration_us":(?<duration_us>\d+).*,"ts_ms":(?<ts_ms>\d+)\}'
+
+# 目标输出字段映射
+field_mappings:
+  pid: "${pid}"
+  comm: "${comm}"
+  fs_op: "${fs_op}"
+  syscall_name: "${syscall_name}"
+  duration_us: "${duration_us}"
+  ts_ms: "${ts_ms}"
+
+# 固定/默认值
+static_fields:
+  type: "fs_stall"
+
+# 事件类型推断规则
+event_type_rules:
+  - condition: "${fs_op} == 'read'"
+    type: "fs_read_stall"
+  - condition: "${fs_op} == 'write'"
+    type: "fs_write_stall"
+  - condition: "${fs_op} == 'open'"
+    type: "fs_open_stall"
+  - condition: "${fs_op} == 'sync'"
+    type: "fs_sync_stall"
+  - condition: "${fs_op} == 'io'"
+    type: "io_stall"
+  - condition: "${fs_op} == 'lock'"
+    type: "fs_lock_stall"
+  - condition: "${fs_op} == 'cache'"
+    type: "fs_cache_stall"
+
+# 严重程度分类规则
+severity_rules:
+  - condition: "${duration_us} > 100000"  # > 100ms
+    severity: "critical"
+  - condition: "${duration_us} > 10000"   # > 10ms
+    severity: "high"
+  - condition: "${duration_us} > 1000"    # > 1ms
+    severity: "medium"
+  - condition: "${duration_us} > 100"     # > 100us
+    severity: "low"
+
+# 过滤规则
+filter_rules:
+  - include: "${duration_us} > 1000"      # 只包含 > 1ms 的延迟
+  - exclude: "${comm} == 'kworker'"       # 排除内核工作线程
+  - exclude: "${comm} == 'systemd'"       # 排除 systemd 进程
+
+# 示例转换
+# 输入: {"type":"fs_stall","pid":1234,"comm":"nginx","fs_op":"read","syscall_name":"vfs_read","duration_us":5000,"ts_ms":1705319445000}
+# 输出: {"type":"fs_read_stall","pid":1234,"comm":"nginx","fs_op":"read","syscall_name":"vfs_read","duration_us":5000,"ts_ms":1705319445000,"severity":"high"}

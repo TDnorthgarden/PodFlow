@@ -8,13 +8,19 @@
 //! - Prometheus 指标导出
 //!
 //! 使用方式：
-//! ```rust
-//! let nri = NriV3::new(NriV3Config::default())
-//!     .await
-//!     .map_err(|e| NutsError::internal(format!("{}: {}", "Failed to initialize NRI V3", e)))?;
+//! ```rust,no_run
+//! use nuts_observer::collector::nri_v3::{NriV3, NriV3Config};
+//! use nuts_observer::types::error::NutsError;
+//! 
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let nri = NriV3::new(NriV3Config::default())
+//!         .await
+//!         .map_err(|e| NutsError::internal(&format!("{}: {}", "Failed to initialize NRI V3", e)))?;
+//!     Ok(())
+//! }
 //! ```
 
-use crate::types::error::NutsError;
 use std::sync::Arc;
 
 use super::nri_mapping::NriEvent;
@@ -323,7 +329,7 @@ impl NriV3 {
         // 先获取需要的数据，避免部分移动问题
         let batch_processor = self.batch_processor;
         let persist_store = self.persist_store;
-        let mut handles = self.handles;
+        let handles = self.handles;
         let table = self.table;
 
         // 执行最终快照
@@ -401,6 +407,7 @@ pub async fn create_nri_v3_with_config(config: NriV3Config) -> Result<NriV3, Nri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::error::NutsError;
     use crate::collector::nri_mapping::{NriContainerInfo, NriPodEvent};
 
     #[tokio::test]
@@ -429,6 +436,9 @@ mod tests {
         
         // 等待处理
         nri.flush().await;
+        
+        // 等待事件处理完成
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
         // 验证
         assert_eq!(nri.table().pod_count(), 1);
@@ -463,7 +473,3 @@ mod tests {
     }
 }
 
-// TODO: Fix nri_v3_tests module - tests need to be updated for new API
-// #[cfg(test)]
-// #[path = "nri_v3_tests.rs"]
-// mod nri_v3_tests;

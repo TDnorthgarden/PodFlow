@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 /// 推送渠道类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

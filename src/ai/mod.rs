@@ -8,9 +8,14 @@
 
 pub mod async_bridge;
 pub mod llm_client;
+pub mod real_ai_integration;
 
 // 重新导出常用类型（AiEnhancedDiagnosis 在本模块定义）
 pub use async_bridge::{AiResultStore, AiTask, AiTaskQueue};
+pub use real_ai_integration::{
+    AiCallManager, AiCallResult, AiResponseCache, AiServiceClient, AnthropicServiceClient,
+    OpenAiServiceClient, RetryPolicy,
+};
 
 use crate::types::diagnosis::{DiagnosisResult, Recommendation, AiStatus};
 use crate::types::evidence::Evidence;
@@ -169,12 +174,16 @@ pub struct AiOutput {
 /// 聊天完成响应结构（支持 OpenAI 和本地模型格式）
 #[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
+    #[allow(dead_code)]
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<String>,
+    #[allow(dead_code)]
     #[serde(skip_serializing_if = "Option::is_none")]
     object: Option<String>,
+    #[allow(dead_code)]
     #[serde(skip_serializing_if = "Option::is_none")]
     created: Option<i64>,
+    #[allow(dead_code)]
     model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     choices: Option<Vec<ChatCompletionChoice>>,
@@ -182,20 +191,24 @@ struct ChatCompletionResponse {
     output: Option<String>,  // 本地模型可能直接返回 output
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>, // 本地模型可能直接返回 content
+    #[allow(dead_code)]
     #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<ChatCompletionUsage>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionChoice {
+    #[allow(dead_code)]
     index: Option<i32>,
     message: Option<ChatCompletionMessage>,
+    #[allow(dead_code)]
     #[serde(skip_serializing_if = "Option::is_none")]
     finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionMessage {
+    #[allow(dead_code)]
     #[serde(skip_serializing_if = "Option::is_none")]
     role: Option<String>,
     content: Option<String>,
@@ -203,10 +216,13 @@ struct ChatCompletionMessage {
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionUsage {
+    #[allow(dead_code)]
     #[serde(skip_serializing_if = "Option::is_none")]
     prompt_tokens: Option<i32>,
+    #[allow(dead_code)]
     #[serde(skip_serializing_if = "Option::is_none")]
     completion_tokens: Option<i32>,
+    #[allow(dead_code)]
     #[serde(skip_serializing_if = "Option::is_none")]
     total_tokens: Option<i32>,
 }
@@ -216,6 +232,8 @@ struct ChatCompletionUsage {
 pub struct AiEnhancedDiagnosis {
     /// 原始诊断结果
     pub original: DiagnosisResult,
+    /// 原始证据数据（用于增量发布）
+    pub evidences: Vec<Evidence>,
     /// AI 输出
     pub ai_output: Option<AiOutput>,
     /// 增强后的诊断（合并 AI 建议）
@@ -684,6 +702,7 @@ impl AiAdapter {
                 let processing_ms = chrono::Utc::now().timestamp_millis() - start;
                 return AiEnhancedDiagnosis {
                     original: diagnosis.clone(),
+                    evidences: evidences.to_vec(),
                     ai_output: None,
                     enhanced: diagnosis.clone(),
                     ai_status: AiStatus::SkippedInsufficientEvidence,
@@ -705,6 +724,7 @@ impl AiAdapter {
 
                 AiEnhancedDiagnosis {
                     original: diagnosis.clone(),
+                    evidences: evidences.to_vec(),
                     ai_output: Some(ai_output),
                     enhanced,
                     ai_status: AiStatus::Ok,
@@ -719,6 +739,7 @@ impl AiAdapter {
 
                 AiEnhancedDiagnosis {
                     original: diagnosis.clone(),
+                    evidences: evidences.to_vec(),
                     ai_output: None,
                     enhanced,
                     ai_status: AiStatus::Unavailable,

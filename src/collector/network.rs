@@ -1,7 +1,6 @@
 use crate::types::error::NutsError;
 use crate::types::evidence::*;
 use crate::collector::nri_mapping::{AttributionSource, NriMappingTable};
-use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -39,7 +38,8 @@ fn make_evidence_id(task_id: &str, evidence_type: &str, collection_id: &str, sco
     format!("{:x}", hasher.finalize())
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[allow(dead_code)]
 struct BpftraceNetworkEvent {
     #[serde(rename = "type")]
     event_type: String,

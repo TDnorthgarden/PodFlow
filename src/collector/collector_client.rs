@@ -2,16 +2,17 @@
 //!
 //! 为非特权的 nuts-observer 提供访问 collector daemon 的接口。
 //! 使用 gRPC over Unix Socket 进行通信。
-//! 
-//! 注意: 当前版本使用开发模式（直接执行），gRPC over Unix Socket 功能待完善
 
 use std::path::Path;
-
-use tracing::{info, warn};
+use tonic::transport::Channel;
+use tracing::{info, warn, debug, error};
 
 // 引入生成的 protobuf 代码用于类型定义
-#[cfg(feature = "nri-grpc")]
-use crate::collector::proto;
+use crate::collector::proto::collector_client::CollectorClient;
+use crate::collector::proto::{
+    CollectRequest, ReadProcRequest, CancelRequest, HealthRequest, PermissionCheckRequest,
+    CollectResponse, ReadProcResponse, CancelResponse, HealthResponse, PermissionCheckResponse,
+};
 
 /// 采集器客户端错误
 #[derive(Debug)]
@@ -43,14 +44,14 @@ impl std::fmt::Display for CollectorClientError {
 impl std::error::Error for CollectorClientError {}
 
 /// 采集器客户端
-/// 
-/// 注意: 当前版本使用简化实现，gRPC over Unix Socket 待完善
-pub struct CollectorClient {
+pub struct CollectorClientWrapper {
     socket_path: String,
+    client: Option<CollectorClient<tonic::transport::Channel>>,
+    #[allow(dead_code)]
     connected: bool,
 }
 
-impl CollectorClient {
+impl CollectorClientWrapper {
     /// 连接到 collector daemon
     /// 
     /// # Arguments
@@ -61,13 +62,26 @@ impl CollectorClient {
             return Err(CollectorClientError::DaemonUnavailable);
         }
 
-        // TODO: 实现 gRPC over Unix Socket
-        // 当前版本使用开发模式回退
-        info!("Collector daemon socket found at {}, but using dev mode fallback", socket_path);
+        // 构建 Unix Socket 连接
+        let endpoint = Channel::from_shared("unix://".to_string() + socket_path)
+            .map_err(|e| CollectorClientError::ConnectionError(
+                format!("Invalid socket endpoint: {}", e)
+            ))?;
+
+        let channel = endpoint.connect()
+            .await
+            .map_err(|e| CollectorClientError::ConnectionError(
+                format!("Failed to connect to Unix socket: {}", e)
+            ))?;
+
+        let client = CollectorClient::new(channel);
+
+        info!("Connected to collector daemon at {}", socket_path);
         
         Ok(Self {
             socket_path: socket_path.to_string(),
-            connected: false,
+            client: Some(client),
+            connected: true,
         })
     }
 
@@ -83,61 +97,150 @@ impl CollectorClient {
     }
 
     /// 执行 bpftrace 采集
-    /// 
-    /// 注意: 当前版本回退到开发模式执行
     pub async fn collect_bpftrace(
         &mut self,
-        _task_id: &str,
-        _script_path: &str,
-        _duration_secs: u64,
-        _scope_pid: Option<u32>,
-        _evidence_type: &str,
-    ) -> Result<proto::CollectResponse, CollectorClientError> {
-        // 当前版本使用开发模式回退
-        Err(CollectorClientError::DaemonUnavailable)
+        task_id: &str,
+        script_path: &str,
+        duration_secs: u64,
+        scope_pid: Option<u32>,
+        evidence_type: &str,
+    ) -> Result<CollectResponse, CollectorClientError> {
+        let client = self.client.as_mut()
+            .ok_or_else(|| CollectorClientError::ConnectionError("Not connected".to_string()))?;
+
+        let request = tonic::Request::new(CollectRequest {
+            task_id: task_id.to_string(),
+            script_path: script_path.to_string(),
+            script_content: String::new(),
+            duration_secs,
+            scope_pid,
+            cgroup_id: None,
+            evidence_type: evidence_type.to_string(),
+            params: std::collections::HashMap::new(),
+        });
+
+        debug!("Sending collect_bpftrace request: task_id={}, script={}", task_id, script_path);
+
+        match client.collect_bpftrace(request).await {
+            Ok(response) => {
+                let resp = response.into_inner();
+                info!("Collection completed: id={}, status={}", resp.collection_id, resp.status);
+                Ok(resp)
+            }
+            Err(status) => {
+                error!("Collection failed: {}", status);
+                Err(CollectorClientError::Other(format!("gRPC error: {}", status)))
+            }
+        }
     }
 
     /// 读取 /proc 文件
     pub async fn read_proc(
         &mut self,
-        _task_id: &str,
-        _path: &str,
-        _pid: Option<u32>,
-    ) -> Result<proto::ReadProcResponse, CollectorClientError> {
-        Err(CollectorClientError::DaemonUnavailable)
+        task_id: &str,
+        path: &str,
+        pid: Option<u32>,
+    ) -> Result<ReadProcResponse, CollectorClientError> {
+        let client = self.client.as_mut()
+            .ok_or_else(|| CollectorClientError::ConnectionError("Not connected".to_string()))?;
+
+        let request = tonic::Request::new(ReadProcRequest {
+            task_id: task_id.to_string(),
+            path: path.to_string(),
+            pid,
+            follow_symlink: false,
+        });
+
+        debug!("Sending read_proc request: task_id={}, path={}", task_id, path);
+
+        match client.read_proc(request).await {
+            Ok(response) => {
+                let resp = response.into_inner();
+                info!("Read proc completed: path={}, exists={}", path, resp.exists);
+                Ok(resp)
+            }
+            Err(status) => {
+                error!("Read proc failed: {}", status);
+                Err(CollectorClientError::Other(format!("gRPC error: {}", status)))
+            }
+        }
     }
 
     /// 取消正在进行的采集
     pub async fn cancel_collection(
         &mut self,
-        _collection_id: &str,
-        _reason: &str,
-    ) -> Result<proto::CancelResponse, CollectorClientError> {
-        Err(CollectorClientError::DaemonUnavailable)
+        collection_id: &str,
+        reason: &str,
+    ) -> Result<CancelResponse, CollectorClientError> {
+        let client = self.client.as_mut()
+            .ok_or_else(|| CollectorClientError::ConnectionError("Not connected".to_string()))?;
+
+        let request = tonic::Request::new(CancelRequest {
+            collection_id: collection_id.to_string(),
+            reason: reason.to_string(),
+        });
+
+        debug!("Sending cancel_collection request: collection_id={}", collection_id);
+
+        match client.cancel_collection(request).await {
+            Ok(response) => {
+                let resp = response.into_inner();
+                info!("Collection cancelled: id={}, success={}", collection_id, resp.success);
+                Ok(resp)
+            }
+            Err(status) => {
+                error!("Cancel collection failed: {}", status);
+                Err(CollectorClientError::Other(format!("gRPC error: {}", status)))
+            }
+        }
     }
 
     /// 健康检查
-    #[cfg(feature = "nri-grpc")]
-    pub async fn health(&mut self, _include_stats: bool) -> Result<proto::HealthResponse, CollectorClientError> {
-        Ok(proto::HealthResponse {
-            healthy: self.connected,
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            active_collections: 0,
-            total_collections: 0,
-            uptime_secs: 0,
-            socket_path: self.socket_path.clone(),
-            capabilities: vec![],
-        })
+    pub async fn health(&mut self, include_stats: bool) -> Result<HealthResponse, CollectorClientError> {
+        let client = self.client.as_mut()
+            .ok_or_else(|| CollectorClientError::ConnectionError("Not connected".to_string()))?;
+
+        let request = tonic::Request::new(HealthRequest {
+            include_stats,
+        });
+
+        debug!("Sending health request: include_stats={}", include_stats);
+
+        match client.health(request).await {
+            Ok(response) => {
+                let resp = response.into_inner();
+                info!("Health check completed: healthy={}", resp.healthy);
+                Ok(resp)
+            }
+            Err(status) => {
+                error!("Health check failed: {}", status);
+                Err(CollectorClientError::Other(format!("gRPC error: {}", status)))
+            }
+        }
     }
 
     /// 检查当前 UID 的权限
-    #[cfg(feature = "nri-grpc")]
-    pub async fn check_permission(&mut self, uid: u32) -> Result<proto::PermissionCheckResponse, CollectorClientError> {
-        Ok(proto::PermissionCheckResponse {
-            allowed: uid == 0 || uid == 1000,
-            granted_permissions: vec![],
-            message: "Using dev mode".to_string(),
-        })
+    pub async fn check_permission(&mut self, uid: u32) -> Result<PermissionCheckResponse, CollectorClientError> {
+        let client = self.client.as_mut()
+            .ok_or_else(|| CollectorClientError::ConnectionError("Not connected".to_string()))?;
+
+        let request = tonic::Request::new(PermissionCheckRequest {
+            uid,
+        });
+
+        debug!("Sending check_permission request: uid={}", uid);
+
+        match client.check_permission(request).await {
+            Ok(response) => {
+                let resp = response.into_inner();
+                info!("Permission check completed: allowed={}", resp.allowed);
+                Ok(resp)
+            }
+            Err(status) => {
+                error!("Permission check failed: {}", status);
+                Err(CollectorClientError::Other(format!("gRPC error: {}", status)))
+            }
+        }
     }
 
     /// 获取 socket 路径
@@ -150,7 +253,8 @@ impl CollectorClient {
 /// 
 /// 优先使用 daemon，如果不可用则回退到开发模式（直接执行）
 pub struct AutoFallbackCollector {
-    client: Option<CollectorClient>,
+    client: Option<CollectorClientWrapper>,
+    #[allow(dead_code)]
     socket_path: String,
     allow_dev_mode: bool,
 }
@@ -158,7 +262,7 @@ pub struct AutoFallbackCollector {
 impl AutoFallbackCollector {
     /// 创建新的自动回退采集器
     pub async fn new(socket_path: &str, allow_dev_mode: bool) -> Self {
-        let client = CollectorClient::try_connect(socket_path).await;
+        let client = CollectorClientWrapper::try_connect(socket_path).await;
         
         if client.is_none() && allow_dev_mode {
             warn!("Collector daemon not available, will use dev mode (direct execution)");
@@ -173,8 +277,8 @@ impl AutoFallbackCollector {
 
     /// 检查是否使用 daemon 模式
     pub fn is_daemon_mode(&self) -> bool {
-        // 当前版本总是使用开发模式
-        false
+        // 如果有客户端连接，则使用 daemon 模式
+        self.client.is_some()
     }
 
     /// 执行采集
@@ -185,9 +289,21 @@ impl AutoFallbackCollector {
         duration_secs: u64,
         scope_pid: Option<u32>,
         evidence_type: &str,
-    ) -> Result<proto::CollectResponse, CollectorClientError> {
-        // 当前版本直接使用开发模式
-        self.collect_dev_mode(task_id, script_path, duration_secs, scope_pid, evidence_type).await
+    ) -> Result<CollectResponse, CollectorClientError> {
+        match &mut self.client {
+            Some(client) => {
+                // 使用 daemon 模式
+                client.collect_bpftrace(task_id, script_path, duration_secs, scope_pid, evidence_type).await
+            }
+            None if self.allow_dev_mode => {
+                // 回退到开发模式
+                self.collect_dev_mode(task_id, script_path, duration_secs, scope_pid, evidence_type).await
+            }
+            None => {
+                // 无 daemon 且不允许开发模式
+                Err(CollectorClientError::DaemonUnavailable)
+            }
+        }
     }
 
     /// 开发模式采集（直接执行 bpftrace）
@@ -198,7 +314,7 @@ impl AutoFallbackCollector {
         duration_secs: u64,
         _scope_pid: Option<u32>,
         _evidence_type: &str,
-    ) -> Result<proto::CollectResponse, CollectorClientError> {
+    ) -> Result<CollectResponse, CollectorClientError> {
         use tokio::process::Command;
         use tokio::time::{timeout, Duration};
 
@@ -217,7 +333,7 @@ impl AutoFallbackCollector {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let event_count = stdout.lines().count() as u32;
 
-        Ok(proto::CollectResponse {
+        Ok(CollectResponse {
             collection_id: format!("dev-mode-{}", uuid::Uuid::new_v4()),
             raw_output: stdout.as_bytes().to_vec(),
             duration_ms: duration_secs * 1000, // 估算

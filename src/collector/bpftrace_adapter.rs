@@ -3,7 +3,6 @@
 //! 提供通用接口，将不同bpftrace脚本的输出转换为标准化的Evidence Schema。
 //! 支持配置驱动的字段映射，以适应客户的自定义脚本。
 
-use crate::types::error::NutsError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;

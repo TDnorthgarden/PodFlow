@@ -1,0 +1,187 @@
+#!/usr/bin/env bpftrace
+/*
+ * Nuts-Observer Filesystem Stall Probe
+ * 文件系统延迟采集脚本 - 符合 bpftrace_output_standard v0.1
+ * 
+ * Evidence Type: fs_stall
+ * Key Metrics: fs_op, duration_us, pid, comm, syscall_name
+ * 
+ * 输出格式: JSON Lines
+ */
+
+#include <linux/fs.h>
+#include <linux/sched.h>
+
+BEGIN
+{
+    printf("{\"type\":\"start\",\"msg\":\"fs_stall probe started\",\"probe_id\":\"fs.stall\",\"version\":\"v0.1\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+}
+
+// 跟踪文件系统操作入口
+kprobe:vfs_read,
+kprobe:vfs_write,
+kprobe:vfs_open,
+kprobe:vfs_openat,
+kprobe:vfs_create,
+kprobe:vfs_unlink,
+kprobe:vfs_sync,
+kprobe:vfs_fsync
+{
+    $pid = pid;
+    $tid = tid;
+    $comm = comm;
+    
+    @fs_start[$tid] = nsecs;
+    @fs_op[$tid] = probefunc;
+    @fs_pid[$tid] = $pid;
+    @fs_comm[$tid] = $comm;
+}
+
+// 跟踪文件系统操作出口
+kretprobe:vfs_read,
+kretprobe:vfs_write,
+kretprobe:vfs_open,
+kretprobe:vfs_openat,
+kretprobe:vfs_create,
+kretprobe:vfs_unlink,
+kretprobe:vfs_sync,
+kretprobe:vfs_fsync
+/@fs_start[tid] != 0/
+{
+    $tid = tid;
+    $pid = @fs_pid[$tid];
+    $comm = @fs_comm[$tid];
+    $fs_op = @fs_op[$tid];
+    $duration_us = (nsecs - @fs_start[$tid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    $ret = args->ret;
+    
+    // 提取操作类型
+    $op_type = "unknown";
+    if ($fs_op == "vfs_read") {
+        $op_type = "read";
+    } else if ($fs_op == "vfs_write") {
+        $op_type = "write";
+    } else if ($fs_op == "vfs_open" || $fs_op == "vfs_openat") {
+        $op_type = "open";
+    } else if ($fs_op == "vfs_create") {
+        $op_type = "create";
+    } else if ($fs_op == "vfs_unlink") {
+        $op_type = "unlink";
+    } else if ($fs_op == "vfs_sync" || $fs_op == "vfs_fsync") {
+        $op_type = "sync";
+    }
+    
+    // 只记录慢文件系统操作 (>1ms)
+    if ($duration_us > 1000) {
+        printf("{\"type\":\"fs_stall\",\"pid\":%d,\"comm\":\"%s\",\"fs_op\":\"%s\",\"syscall_name\":\"%s\",\"duration_us\":%llu,\"ret\":%d,\"ts_ms\":%llu}\n",
+            $pid, $comm, $op_type, $fs_op, $duration_us, $ret, $ts_ms);
+        
+        // 按操作类型聚合
+        @fs_stall_count[$op_type] = count();
+        @fs_latency_hist = hist($duration_us);
+    }
+    
+    delete(@fs_start[$tid]);
+    delete(@fs_op[$tid]);
+    delete(@fs_pid[$tid]);
+    delete(@fs_comm[$tid]);
+}
+
+// 跟踪 I/O 调度延迟
+kprobe:blk_mq_start_request
+{
+    $pid = pid;
+    $comm = comm;
+    
+    @io_start[$pid] = nsecs;
+    @io_comm[$pid] = $comm;
+}
+
+kprobe:blk_account_io_done
+/@io_start[pid] != 0/
+{
+    $pid = pid;
+    $comm = @io_comm[$pid];
+    $duration_us = (nsecs - @io_start[$pid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    
+    if ($duration_us > 5000) {  // > 5ms
+        printf("{\"type\":\"io_stall\",\"pid\":%d,\"comm\":\"%s\",\"fs_op\":\"io\",\"duration_us\":%llu,\"ts_ms\":%llu}\n",
+            $pid, $comm, $duration_us, $ts_ms);
+    }
+    
+    delete(@io_start[$pid]);
+    delete(@io_comm[$pid]);
+}
+
+// 跟踪文件锁等待
+kprobe:locks_lock_inode
+{
+    $tid = tid;
+    @lock_start[$tid] = nsecs;
+}
+
+kretprobe:locks_lock_inode
+/@lock_start[tid] != 0/
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = comm;
+    $duration_us = (nsecs - @lock_start[$tid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    
+    if ($duration_us > 10000) {  // > 10ms
+        printf("{\"type\":\"lock_stall\",\"pid\":%d,\"comm\":\"%s\",\"fs_op\":\"lock\",\"duration_us\":%llu,\"ts_ms\":%llu}\n",
+            $pid, $comm, $duration_us, $ts_ms);
+    }
+    
+    delete(@lock_start[$tid]);
+}
+
+// 跟踪页缓存延迟
+kprobe:add_to_page_cache_locked
+{
+    $pid = pid;
+    @cache_start[$pid] = nsecs;
+}
+
+kretprobe:add_to_page_cache_locked
+/@cache_start[pid] != 0/
+{
+    $pid = pid;
+    $comm = comm;
+    $duration_us = (nsecs - @cache_start[$pid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    
+    if ($duration_us > 1000) {  // > 1ms
+        printf("{\"type\":\"cache_stall\",\"pid\":%d,\"comm\":\"%s\",\"fs_op\":\"cache\",\"duration_us\":%llu,\"ts_ms\":%llu}\n",
+            $pid, $comm, $duration_us, $ts_ms);
+    }
+    
+    delete(@cache_start[$pid]);
+}
+
+// 定期输出聚合统计
+interval:s:10
+{
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"stats\",\"ts_ms\":%llu}\n", $ts_ms);
+    
+    // 打印文件系统延迟直方图
+    print(@fs_latency_hist, 5);
+    
+    // 打印各操作类型的延迟次数
+    print(@fs_stall_count, 5);
+    
+    clear(@fs_latency_hist);
+    clear(@fs_stall_count);
+}
+
+END
+{
+    printf("{\"type\":\"end\",\"msg\":\"fs_stall probe stopped\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+}

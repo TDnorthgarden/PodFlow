@@ -6,7 +6,6 @@
 //! - 更好安全（文件系统权限控制）
 //! - 更低资源占用
 
-use crate::types::error::NutsError;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -265,6 +264,7 @@ fn parse_nri_frame(data: &[u8]) -> Result<Vec<NriEvent>, String> {
 }
 
 /// 将内部事件序列化为帧
+#[allow(dead_code)]
 fn serialize_nri_event(event: &NriEvent) -> Result<String, serde_json::Error> {
     let frame_event = match event {
         NriEvent::AddOrUpdate(pod) => {
@@ -459,6 +459,7 @@ pub async fn start_unix_socket_nri(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::error::NutsError;
 
     #[test]
     fn test_nri_frame_parse() -> Result<(), Box<dyn std::error::Error>> {

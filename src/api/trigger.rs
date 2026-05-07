@@ -12,11 +12,8 @@ use crate::collector::syscall_latency::{run_syscall_collect_poc, SyscallCollecto
 use crate::collector::fs_stall::{run_fs_stall_collect_poc, FsStallCollectorConfig};
 use crate::diagnosis::engine::RuleEngine;
 use crate::publisher::ResultPublisher;
-use crate::types::diagnosis::{DiagnosisResult, Conclusion, EvidenceStrength, DiagnosisStatus, Traceability};
 use crate::types::evidence::{NetworkTarget, PodInfo, TimeWindow, Evidence};
-use crate::types::error::NutsError;
 use crate::api::condition::TriggerError;
-use serde_json::json;
 
 #[derive(Debug, Deserialize)]
 pub struct TriggerRequest {

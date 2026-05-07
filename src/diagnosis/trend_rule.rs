@@ -6,7 +6,6 @@
 //! - 预测性告警（基于趋势预测未来状态）
 //! - 趋势变化点检测
 
-use crate::types::error::NutsError;
 use crate::types::diagnosis::*;
 use crate::types::evidence::Evidence;
 use crate::diagnosis::engine::Rule;
@@ -161,7 +160,7 @@ impl TrendRule {
         let sum_y: f64 = y_values.iter().sum();
         let sum_xy: f64 = x_values.iter().zip(y_values.iter()).map(|(x, y)| x * y).sum();
         let sum_x2: f64 = x_values.iter().map(|x| x * x).sum();
-        let sum_y2: f64 = y_values.iter().map(|y| y * y).sum();
+        let _sum_y2: f64 = y_values.iter().map(|y| y * y).sum();
 
         let denominator = n * sum_x2 - sum_x * sum_x;
         if denominator.abs() < f64::EPSILON {
@@ -413,7 +412,7 @@ pub fn create_default_trend_rules() -> Vec<Box<dyn Rule>> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use crate::types::diagnosis::Conclusion;
+    use crate::types::error::NutsError;
     use crate::types::evidence::{CollectionMeta, TimeWindow, Scope, Attribution};
 
     fn create_test_evidence_with_time(

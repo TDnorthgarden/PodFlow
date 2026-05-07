@@ -1,5 +1,6 @@
 pub mod block_io;
 pub mod network;
+pub mod tcp_connect_stages;
 pub mod nri_mapping;
 pub mod nri_mapping_v2;
 pub mod nri_version;

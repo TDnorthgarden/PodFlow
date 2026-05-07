@@ -1,0 +1,89 @@
+# TCP Connect Stages 适配器配置
+# 用于将 tcp_connect_stages.bt 脚本输出转换为标准证据格式
+
+adapter_id: tcp_connect_stages
+version: v0.1
+source_type: bpftrace_output
+evidence_type: tcp_attempt_stage
+
+# 源数据格式匹配模式
+# tcp_connect_stages.bt 脚本输出的 JSON Lines 格式
+source_pattern: '\{"type":"tcp_attempt_stage","pid":(?<pid>\d+),"comm":"(?<comm>[^"]+)","stage":"(?<stage>[^"]+)","duration_us":(?<duration_us>\d+).*,"ts_ms":(?<ts_ms>\d+)\}'
+
+# 目标输出字段映射
+field_mappings:
+  pid: "${pid}"
+  comm: "${comm}"
+  stage: "${stage}"
+  duration_us: "${duration_us}"
+  ts_ms: "${ts_ms}"
+
+# 固定/默认值
+static_fields:
+  type: "tcp_attempt_stage"
+
+# 事件类型推断规则
+event_type_rules:
+  # 成功连接阶段
+  - condition: "${stage} == 'syn_sent'"
+    type: "tcp_syn_sent"
+  - condition: "${stage} == 'syn_acked'"
+    type: "tcp_syn_acked"
+  - condition: "${stage} == 'connect_success'"
+    type: "tcp_connect_success"
+  
+  # 连接失败阶段
+  - condition: "${stage} == 'syn_failed'"
+    type: "tcp_syn_failed"
+  - condition: "${stage} == 'synack_timeout'"
+    type: "tcp_synack_timeout"
+  - condition: "${stage} == 'synack_failed'"
+    type: "tcp_synack_failed"
+  - condition: "${stage} == 'connect_failed'"
+    type: "tcp_connect_failed"
+  - condition: "${stage} == 'connect_timeout'"
+    type: "tcp_connect_timeout"
+  
+  # 连接重置和关闭
+  - condition: "${stage} == 'reset_received'"
+    type: "tcp_reset_received"
+  - condition: "${stage} == 'connect_closed'"
+    type: "tcp_connect_closed"
+
+# 严重程度分类规则
+severity_rules:
+  # 连接成功 - 低严重程度
+  - condition: "${stage} == 'syn_sent' || ${stage} == 'syn_acked' || ${stage} == 'connect_success'"
+    severity: "low"
+  
+  # 连接关闭 - 中等严重程度
+  - condition: "${stage} == 'connect_closed'"
+    severity: "medium"
+  
+  # 连接失败 - 高严重程度
+  - condition: "${stage} == 'syn_failed' || ${stage} == 'synack_failed' || ${stage} == 'connect_failed'"
+    severity: "high"
+  
+  # 超时和重置 - 严重程度
+  - condition: "${stage} == 'synack_timeout' || ${stage} == 'connect_timeout' || ${stage} == 'reset_received'"
+    severity: "critical"
+
+# 过滤规则
+filter_rules:
+  # 排除系统进程
+  - exclude: "${comm} == 'systemd'"
+  - exclude: "${comm} == 'kworker'"
+  - exclude: "${comm} == 'ksoftirqd'"
+  
+  # 只记录有意义的延迟（>100us）
+  - include: "${duration_us} > 100"
+  
+  # 优先记录失败和超时事件
+  - include: "${stage} == 'syn_failed' || ${stage} == 'synack_timeout' || ${stage} == 'connect_timeout' || ${stage} == 'reset_received'"
+
+# 示例转换
+# 输入: {"type":"tcp_attempt_stage","pid":1234,"comm":"nginx","stage":"syn_failed","duration_us":5000,"error_code":-115,"ts_ms":1705319445000}
+# 输出: {"type":"tcp_syn_failed","pid":1234,"comm":"nginx","stage":"syn_failed","duration_us":5000,"ts_ms":1705319445000,"severity":"high"}
+
+# 输入: {"type":"tcp_attempt_stage","pid":5678,"comm":"curl","stage":"connect_success","duration_us":15000,"ts_ms":1705319445000}
+# 输出: {"type":"tcp_connect_success","pid":5678,"comm":"curl","stage":"connect_success","duration_us":15000,"ts_ms":1705319445000,"severity":"low"}

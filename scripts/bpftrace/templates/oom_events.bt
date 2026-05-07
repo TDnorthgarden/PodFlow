@@ -1,0 +1,190 @@
+#!/usr/bin/env bpftrace
+/*
+ * Nuts-Observer OOM Events Probe
+ * OOM 事件监听脚本 - 符合 bpftrace_output_standard v0.1
+ * 
+ * Evidence Type: oom_events
+ * Key Metrics: pid, comm, victim_pid, victim_comm, oom_score_adj
+ * 
+ * 输出格式: JSON Lines
+ */
+
+#include <linux/mm.h>
+#include <linux/oom.h>
+
+BEGIN
+{
+    printf("{\"type\":\"start\",\"msg\":\"oom_events probe started\",\"probe_id\":\"oom.events\",\"version\":\"v0.1\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+}
+
+// 跟踪 OOM Kill 事件
+kprobe:oom_kill_process
+{
+    $pid = pid;
+    $comm = comm;
+    $ts_ms = nsecs / 1000000;
+    
+    // 由于 kprobe 无法直接获取 victim 信息，我们记录触发 OOM 的进程
+    printf("{\"type\":\"oom_trigger\",\"pid\":%d,\"comm\":\"%s\",\"ts_ms\":%llu}\n",
+        $pid, $comm, $ts_ms);
+    
+    // 聚合 OOM 统计
+    @oom_trigger_count = count();
+    @oom_triggers[$comm] = count();
+}
+
+// 跟踪 OOM score adj 更新（更详细的 OOM 事件）
+tracepoint:oom:oom_score_adj_update
+{
+    $pid = args->pid;
+    $comm = args->comm;
+    $oom_score_adj = args->oom_score_adj;
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"oom_score_adj\",\"pid\":%d,\"comm\":\"%s\",\"oom_score_adj\":%d,\"ts_ms\":%llu}\n",
+        $pid, $comm, $oom_score_adj, $ts_ms);
+    
+    // 聚合 OOM score adj 统计
+    @oom_score_adj_count = count();
+}
+
+// 跟踪内存压力事件
+tracepoint:vmscan:mm_vmscan_kswapd_wake,
+tracepoint:vmscan:mm_vmscan_direct_reclaim_begin
+{
+    $pid = pid;
+    $comm = comm;
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"memory_pressure\",\"pid\":%d,\"comm\":\"%s\",\"event\":\"%s\",\"ts_ms\":%llu}\n",
+        $pid, $comm, probefunc, $ts_ms);
+    
+    @memory_pressure_count = count();
+}
+
+// 跟踪页面回收事件
+tracepoint:vmscan:mm_vmscan_lru_isolate,
+tracepoint:vmscan:mm_vmscan_lru_shrink_inactive,
+tracepoint:vmscan:mm_vmscan_lru_shrink_active
+{
+    $pid = pid;
+    $comm = comm;
+    $nr_scanned = args->nr_scanned;
+    $nr_reclaimed = args->nr_reclaimed;
+    $ts_ms = nsecs / 1000000;
+    
+    // 只记录有意义的回收操作
+    if ($nr_scanned > 0) {
+        printf("{\"type\":\"page_reclaim\",\"pid\":%d,\"comm\":\"%s\",\"event\":\"%s\",\"nr_scanned\":%d,\"nr_reclaimed\":%d,\"ts_ms\":%llu}\n",
+            $pid, $comm, probefunc, $nr_scanned, $nr_reclaimed, $ts_ms);
+    }
+    
+    @page_scanned_total += $nr_scanned;
+    @page_reclaimed_total += $nr_reclaimed;
+}
+
+// 跟踪内存分配失败
+kprobe:__alloc_pages_slowpath
+{
+    $pid = pid;
+    $comm = comm;
+    $order = args->order;
+    $gfp_mask = args->gfp_mask;
+    
+    @alloc_start[$pid] = nsecs;
+    @alloc_order[$pid] = $order;
+    @alloc_comm[$pid] = $comm;
+}
+
+kretprobe:__alloc_pages_slowpath
+/@alloc_start[pid] != 0/
+{
+    $pid = pid;
+    $comm = @alloc_comm[$pid];
+    $order = @alloc_order[$pid];
+    $duration_us = (nsecs - @alloc_start[$pid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    $ret = args->ret;
+    
+    // 记录慢内存分配 (>10ms) 或失败
+    if ($duration_us > 10000 || $ret == 0) {
+        printf("{\"type\":\"slow_alloc\",\"pid\":%d,\"comm\":\"%s\",\"order\":%d,\"duration_us\":%llu,\"success\":%d,\"ts_ms\":%llu}\n",
+            $pid, $comm, $order, $duration_us, $ret != 0, $ts_ms);
+    }
+    
+    delete(@alloc_start[$pid]);
+    delete(@alloc_order[$pid]);
+    delete(@alloc_comm[$pid]);
+}
+
+// 跟踪 slab 分配器延迟
+kprobe:kmem_cache_alloc
+{
+    $pid = pid;
+    $comm = comm;
+    
+    @slab_start[$pid] = nsecs;
+    @slab_comm[$pid] = $comm;
+}
+
+kretprobe:kmem_cache_alloc
+/@slab_start[pid] != 0/
+{
+    $pid = pid;
+    $comm = @slab_comm[$pid];
+    $duration_us = (nsecs - @slab_start[$pid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+    
+    if ($duration_us > 5000) {  // > 5ms
+        printf("{\"type\":\"slow_slab_alloc\",\"pid\":%d,\"comm\":\"%s\",\"duration_us\":%llu,\"ts_ms\":%llu}\n",
+            $pid, $comm, $duration_us, $ts_ms);
+    }
+    
+    delete(@slab_start[$pid]);
+    delete(@slab_comm[$pid]);
+}
+
+// 跟踪内存分配事件
+tracepoint:kmem:kmem_cache_alloc
+{
+    $pid = pid;
+    $comm = comm;
+    $bytes_req = args->bytes_req;
+    $gfp_flags = args->gfp_flags;
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"mem_alloc\",\"pid\":%d,\"comm\":\"%s\",\"bytes_req\":%d,\"gfp_flags\":%d,\"ts_ms\":%llu}\n",
+        $pid, $comm, $bytes_req, $gfp_flags, $ts_ms);
+}
+
+// 定期输出聚合统计
+interval:s:15
+{
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"stats\",\"ts_ms\":%llu}\n", $ts_ms);
+    
+    // 打印 OOM 统计
+    print(@oom_kill_count, 5);
+    print(@oom_victims, 5);
+    
+    // 打印内存压力统计
+    print(@memory_pressure_count, 5);
+    
+    // 打印页面回收统计
+    printf("{\"page_scanned_total\":%llu,\"page_reclaimed_total\":%llu}\n",
+        @page_scanned_total, @page_reclaimed_total);
+    
+    clear(@oom_kill_count);
+    clear(@oom_victims);
+    clear(@memory_pressure_count);
+    clear(@page_scanned_total);
+    clear(@page_reclaimed_total);
+}
+
+END
+{
+    printf("{\"type\":\"end\",\"msg\":\"oom_events probe stopped\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+}

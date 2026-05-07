@@ -3,13 +3,12 @@
 //! 提供规则的动态加载、更新、删除功能
 //! 支持通过 HTTP API 和 CLI 进行规则管理
 
-use crate::config::ThresholdRuleDef;
 use crate::diagnosis::engine::{RuleEngine, ThresholdRule, ThresholdOperator};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use std::time::SystemTime;
 
 /// 动态规则定义（用于序列化/反序列化）
@@ -185,7 +184,7 @@ impl RuleManager {
         updates: RuleUpdates,
     ) -> Result<(), RuleManagerError> {
         // 获取并更新规则
-        let updated_rule = {
+        let _updated_rule = {
             let mut rules = self.rules.write().await;
             let rule = rules.get_mut(rule_id)
                 .ok_or_else(|| RuleManagerError::RuleNotFound(rule_id.to_string()))?;

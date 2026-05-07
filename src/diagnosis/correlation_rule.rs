@@ -9,7 +9,6 @@
 use crate::types::diagnosis::*;
 use crate::types::evidence::Evidence;
 use crate::diagnosis::engine::Rule;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// 关联条件
