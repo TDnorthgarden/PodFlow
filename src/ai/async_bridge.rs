@@ -307,7 +307,8 @@ impl AiWorker {
     }
     
     /// 发送增量通知给 Publisher
-    async fn notify_completion(&self, task_id: &str, diagnosis_id: &str, status: &str) {
+    #[allow(dead_code)]
+async fn notify_completion(&self, task_id: &str, diagnosis_id: &str, status: &str) {
         if let Some(ref tx) = self.notification_tx {
             let notification = AiCompletionNotification {
                 task_id: task_id.to_string(),
@@ -435,6 +436,7 @@ impl AiWorker {
 
                         let result = AiEnhancedDiagnosis {
                             original: current_task.diagnosis_snapshot.clone(),
+                            evidences: current_task.evidences.clone(),
                             ai_output: None,
                             enhanced: fallback,
                             ai_status: AiStatus::Unavailable,
@@ -508,6 +510,7 @@ impl AiWorker {
 
                 let result = AiEnhancedDiagnosis {
                     original: task.diagnosis_snapshot.clone(),
+                    evidences: task.evidences.clone(),
                     ai_output: None,
                     enhanced: task.diagnosis_snapshot.clone(),
                     ai_status: AiStatus::SkippedInsufficientEvidence,
@@ -522,6 +525,7 @@ impl AiWorker {
                     state.insert(task_id.clone(), AiTaskState::Completed {
                         result: crate::ai::AiEnhancedDiagnosis {
                             original: task.diagnosis_snapshot.clone(),
+                            evidences: task.evidences.clone(),
                             ai_output: None,
                             enhanced: task.diagnosis_snapshot.clone(),
                             ai_status: AiStatus::SkippedInsufficientEvidence,
@@ -548,6 +552,7 @@ impl AiWorker {
 
                 let result = AiEnhancedDiagnosis {
                     original: task.diagnosis_snapshot.clone(),
+                    evidences: task.evidences.clone(),
                     ai_output: Some(ai_output),
                     enhanced,
                     ai_status: AiStatus::Ok,
@@ -667,6 +672,7 @@ mod tests {
         
         let enhanced = AiEnhancedDiagnosis {
             original: diagnosis.clone(),
+            evidences: vec![], // 测试代码中使用空 evidences
             ai_output: None,
             enhanced: diagnosis.clone(),
             ai_status: AiStatus::Ok,

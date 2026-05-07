@@ -1,8 +1,8 @@
 use crate::types::diagnosis::*;
 use crate::types::evidence::Evidence;
-use crate::diagnosis::correlation_rule::{create_default_correlation_rules, CorrelationRule};
-use crate::diagnosis::statistical_rule::{create_default_statistical_rules, StatisticalRule};
-use crate::diagnosis::trend_rule::{create_default_trend_rules, TrendRule};
+use crate::diagnosis::correlation_rule::create_default_correlation_rules;
+use crate::diagnosis::statistical_rule::create_default_statistical_rules;
+use crate::diagnosis::trend_rule::create_default_trend_rules;
 
 /// 规则引擎 - 基于阈值型规则生成诊断结论（第 1 周 PoC）
 pub struct RuleEngine {

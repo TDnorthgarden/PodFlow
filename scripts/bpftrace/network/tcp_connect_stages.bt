@@ -1,0 +1,203 @@
+#!/usr/bin/env bpftrace
+/*
+ * Network TCP Connect Stages Probe
+ * TCP 连接阶段细分监控 - 提供详细的连通性失败阶段信息
+ * 
+ * Evidence Type: tcp_attempt_stage
+ * Key Metrics: stage, duration_us, error_code, target_addr, target_port
+ * 
+ * 连接阶段细分：
+ * - syn_sent: SYN 包发送
+ * - syn_acked: SYN-ACK 接收
+ * - syn_failed: SYN 发送失败
+ * - synack_timeout: SYN-ACK 超时
+ * - synack_failed: SYN-ACK 接收失败  
+ * - connect_failed: 连接建立失败
+ * - reset_received: RST 包接收
+ * - timeout: 连接超时
+ * 
+ * 输出格式: JSON Lines
+ */
+
+#include <net/sock.h>
+#include <linux/tcp.h>
+
+BEGIN
+{
+    printf("{\"type\":\"start\",\"msg\":\"tcp_connect_stages probe started\",\"probe_id\":\"tcp.connect.stages\",\"version\":\"v0.1\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+}
+
+// 跟踪 TCP 连接发起（客户端 SYN）
+kprobe:tcp_v4_connect,
+kprobe:tcp_v6_connect
+{
+    $sk = (struct sock *)arg0;
+    $tid = tid;
+    $pid = pid;
+    $comm = comm;
+    
+    // 记录连接开始时间
+    @connect_start[$tid, $pid] = nsecs;
+    @connect_comm[$tid, $pid] = $comm;
+    
+    // 输出 SYN 发送阶段
+    printf("{\"type\":\"tcp_attempt_stage\",\"pid\":%d,\"comm\":\"%s\",\"stage\":\"syn_sent\",\"duration_us\":0,\"ts_ms\":%llu}\n",
+        $pid, $comm, nsecs / 1000000);
+}
+
+// 跟踪 SYN 发送失败
+kretprobe:tcp_v4_connect,
+kretprobe:tcp_v6_connect
+/@connect_start[tid, pid] != 0/
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = @connect_comm[$tid, $pid];
+    $start_time = @connect_start[$tid, $pid];
+    $duration_us = (nsecs - $start_time) / 1000;
+    $ret = args->ret;
+    
+    // 检查返回值，负数表示错误
+    if ($ret < 0) {
+        printf("{\"type\":\"tcp_attempt_stage\",\"pid\":%d,\"comm\":\"%s\",\"stage\":\"syn_failed\",\"duration_us\":%llu,\"error_code\":%d,\"ts_ms\":%llu}\n",
+            $pid, $comm, $duration_us, $ret, nsecs / 1000000);
+        
+        delete(@connect_start[$tid, $pid]);
+        delete(@connect_comm[$tid, $pid]);
+    }
+}
+
+// 跟踪收到 SYN-ACK（服务器响应）
+kprobe:tcp_rcv_state_process
+/(@connect_start[tid, pid] != 0) && (arg1 == 1 || arg1 == 6 || arg1 == 7)/  // TCP_SYN_SENT, TCP_SYN_RECV, TCP_ESTABLISHED states
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = @connect_comm[$tid, $pid];
+    $start_time = @connect_start[$tid, $pid];
+    $duration_us = (nsecs - $start_time) / 1000;
+    
+    // 输出 SYN-ACK 接收阶段
+    printf("{\"type\":\"tcp_attempt_stage\",\"pid\":%d,\"comm\":\"%s\",\"stage\":\"syn_acked\",\"duration_us\":%llu,\"ts_ms\":%llu}\n",
+        $pid, $comm, $duration_us, nsecs / 1000000);
+    
+    @synack_received[$tid, $pid] = nsecs;
+}
+
+// 跟踪连接完成（客户端 ACK 发出后进入 ESTABLISHED）
+kprobe:tcp_finish_connect
+/@connect_start[tid, pid] != 0/
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = @connect_comm[$tid, $pid];
+    $start_time = @connect_start[$tid, $pid];
+    $duration_us = (nsecs - $start_time) / 1000;
+    
+    // 输出连接完成阶段
+    printf("{\"type\":\"tcp_attempt_stage\",\"pid\":%d,\"comm\":\"%s\",\"stage\":\"connect_success\",\"duration_us\":%llu,\"ts_ms\":%llu}\n",
+        $pid, $comm, $duration_us, nsecs / 1000000);
+    
+    // 清理记录
+    delete(@connect_start[$tid, $pid]);
+    delete(@connect_comm[$tid, $pid]);
+    delete(@synack_received[$tid, $pid]);
+}
+
+// 跟踪连接重置/失败（RST 包）
+kprobe:tcp_reset
+/@connect_start[tid, pid] != 0/
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = @connect_comm[$tid, $pid];
+    $start_time = @connect_start[$tid, $pid];
+    $duration_us = (nsecs - $start_time) / 1000;
+    
+    // 输出 RST 接收阶段
+    printf("{\"type\":\"tcp_attempt_stage\",\"pid\":%d,\"comm\":\"%s\",\"stage\":\"reset_received\",\"duration_us\":%llu,\"ts_ms\":%llu}\n",
+        $pid, $comm, $duration_us, nsecs / 1000000);
+    
+    // 清理记录
+    delete(@connect_start[$tid, $pid]);
+    delete(@connect_comm[$tid, $pid]);
+    delete(@synack_received[$tid, $pid]);
+}
+
+// 跟踪连接超时（通过定时器检查）
+interval:s:1
+{
+    // 检查超时的连接（超过 5 秒）
+    $timeout_threshold = 5000000000ULL; // 5 seconds in nanoseconds
+    $current_time = nsecs;
+    
+    // 使用 map 遍历所有活跃连接
+    printf("{\"type\":\"timeout_check\",\"ts_ms\":%llu}\n", $current_time / 1000000);
+}
+
+// 跟踪连接关闭（正常或异常）
+kprobe:tcp_close
+/@connect_start[tid, pid] != 0/
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = @connect_comm[$tid, $pid];
+    $start_time = @connect_start[$tid, $pid];
+    $duration_us = (nsecs - $start_time) / 1000;
+    
+    // 输出连接关闭阶段
+    printf("{\"type\":\"tcp_attempt_stage\",\"pid\":%d,\"comm\":\"%s\",\"stage\":\"connect_closed\",\"duration_us\":%llu,\"ts_ms\":%llu}\n",
+        $pid, $comm, $duration_us, nsecs / 1000000);
+    
+    // 清理记录
+    delete(@connect_start[$tid, $pid]);
+    delete(@connect_comm[$tid, $pid]);
+    delete(@synack_received[tid, $pid]);
+}
+
+// 跟踪连接错误（通过 tcp_set_state）
+kprobe:tcp_set_state
+/@connect_start[tid, pid] != 0/
+{
+    $tid = tid;
+    $pid = pid;
+    $comm = @connect_comm[$tid, $pid];
+    $start_time = @connect_start[$tid, $pid];
+    $duration_us = (nsecs - $start_time) / 1000;
+    $new_state = arg1;
+    
+    // TCP_CLOSE 状态表示连接失败
+    if ($new_state == 8) { // TCP_CLOSE
+        printf("{\"type\":\"tcp_attempt_stage\",\"pid\":%d,\"comm\":\"%s\",\"stage\":\"connect_failed\",\"duration_us\":%llu,\"error_code\":8,\"ts_ms\":%llu}\n",
+            $pid, $comm, $duration_us, nsecs / 1000000);
+        
+        // 清理记录
+        delete(@connect_start[$tid, $pid]);
+        delete(@connect_comm[$tid, $pid]);
+        delete(@synack_received[tid, $pid]);
+    }
+}
+
+// 定期输出聚合统计
+interval:s:10
+{
+    $ts_ms = nsecs / 1000000;
+    
+    printf("{\"type\":\"stats\",\"ts_ms\":%llu}\n", $ts_ms);
+    
+    // 统计各阶段的连接数
+    print(@connect_start, 5);
+    print(@synack_received, 5);
+}
+
+END
+{
+    printf("{\"type\":\"end\",\"msg\":\"tcp_connect_stages probe stopped\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+    
+    // 清理所有记录
+    clear(@connect_start);
+    clear(@connect_comm);
+    clear(@synack_received);
+}

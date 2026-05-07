@@ -1,0 +1,190 @@
+# OOM Events 适配器配置
+# 用于将 oom_events.bt 脚本输出转换为标准证据格式
+
+adapter_id: oom_events
+version: v0.1
+source_type: bpftrace_output
+evidence_type: oom_events
+
+# 源数据格式匹配模式 - OOM Kill 事件
+source_pattern_oom: '\{"type":"oom_trigger","pid":(?<pid>\d+),"comm":"(?<comm>[^"]+)","ts_ms":(?<ts_ms>\d+)\}'
+
+# 源数据格式匹配模式 - OOM Score Adj 事件
+source_pattern_score_adj: '\{"type":"oom_score_adj","pid":(?<pid>\d+),"comm":"(?<comm>[^"]+)","oom_score_adj":(?<oom_score_adj>\d+),"ts_ms":(?<ts_ms>\d+)\}'
+
+# 源数据格式匹配模式 - 内存压力事件
+source_pattern_pressure: '\{"type":"memory_pressure","pid":(?<pid>\d+),"comm":"(?<comm>[^"]+)","event":"(?<event>[^"]+)","ts_ms":(?<ts_ms>\d+)\}'
+
+# 源数据格式匹配模式 - 页面回收事件
+source_pattern_reclaim: '\{"type":"page_reclaim","pid":(?<pid>\d+),"comm":"(?<comm>[^"]+)","event":"(?<event>[^"]+)","nr_scanned":(?<nr_scanned>\d+),"nr_reclaimed":(?<nr_reclaimed>\d+),"ts_ms":(?<ts_ms>\d+)\}'
+
+# 源数据格式匹配模式 - 内存分配事件
+source_pattern_mem_alloc: '\{"type":"mem_alloc","pid":(?<pid>\d+),"comm":"(?<comm>[^"]+)","bytes_req":(?<bytes_req>\d+),"gfp_flags":(?<gfp_flags>\d+),"ts_ms":(?<ts_ms>\d+)\}'
+
+# 源数据格式匹配模式 - 慢内存分配事件
+source_pattern_alloc: '\{"type":"slow_alloc","pid":(?<pid>\d+),"comm":"(?<comm>[^"]+)","order":(?<order>\d+),"duration_us":(?<duration_us>\d+),"success":(?<success>\d),"ts_ms":(?<ts_ms>\d+)\}'
+
+# 源数据格式匹配模式 - 慢 slab 分配事件
+source_pattern_slab: '\{"type":"slow_slab_alloc","pid":(?<pid>\d+),"comm":"(?<comm>[^"]+)","duration_us":(?<duration_us>\d+),"ts_ms":(?<ts_ms>\d+)\}'
+
+# 源数据格式匹配模式 - cgroup 压力事件
+source_pattern_cgroup: '\{"type":"cgroup_pressure","pid":(?<pid>\d+),"comm":"(?<comm>[^"]+)","pressure_level":(?<pressure_level>\d+),"ts_ms":(?<ts_ms>\d+)\}'
+
+# 目标输出字段映射 - OOM Kill
+field_mappings_oom:
+  pid: "${pid}"
+  comm: "${comm}"
+  ts_ms: "${ts_ms}"
+
+# 目标输出字段映射 - OOM Score Adj
+field_mappings_score_adj:
+  pid: "${pid}"
+  comm: "${comm}"
+  oom_score_adj: "${oom_score_adj}"
+  ts_ms: "${ts_ms}"
+
+# 目标输出字段映射 - 内存分配事件
+field_mappings_mem_alloc:
+  pid: "${pid}"
+  comm: "${comm}"
+  bytes_req: "${bytes_req}"
+  gfp_flags: "${gfp_flags}"
+  ts_ms: "${ts_ms}"
+
+# 目标输出字段映射 - 内存压力
+field_mappings_pressure:
+  pid: "${pid}"
+  comm: "${comm}"
+  event: "${event}"
+  ts_ms: "${ts_ms}"
+
+# 目标输出字段映射 - 页面回收
+field_mappings_reclaim:
+  pid: "${pid}"
+  comm: "${comm}"
+  event: "${event}"
+  nr_scanned: "${nr_scanned}"
+  nr_reclaimed: "${nr_reclaimed}"
+  ts_ms: "${ts_ms}"
+
+# 目标输出字段映射 - 慢内存分配
+field_mappings_alloc:
+  pid: "${pid}"
+  comm: "${comm}"
+  order: "${order}"
+  duration_us: "${duration_us}"
+  success: "${success}"
+  ts_ms: "${ts_ms}"
+
+# 目标输出字段映射 - 慢 slab 分配
+field_mappings_slab:
+  pid: "${pid}"
+  comm: "${comm}"
+  duration_us: "${duration_us}"
+  ts_ms: "${ts_ms}"
+
+# 目标输出字段映射 - cgroup 压力
+field_mappings_cgroup:
+  pid: "${pid}"
+  comm: "${comm}"
+  pressure_level: "${pressure_level}"
+  ts_ms: "${ts_ms}"
+
+# 固定/默认值
+static_fields_oom:
+  type: "oom_trigger"
+  severity: "critical"
+
+static_fields_score_adj:
+  type: "oom_score_adj"
+  severity: "high"
+
+static_fields_mem_alloc:
+  type: "mem_alloc"
+  severity: "low"
+
+static_fields_pressure:
+  type: "memory_pressure"
+  severity: "high"
+
+static_fields_reclaim:
+  type: "page_reclaim"
+  severity: "medium"
+
+static_fields_alloc:
+  type: "slow_alloc"
+  severity: "medium"
+
+static_fields_slab:
+  type: "slow_slab_alloc"
+  severity: "low"
+
+static_fields_cgroup:
+  type: "cgroup_pressure"
+  severity: "high"
+
+# 事件类型推断规则
+event_type_rules:
+  # OOM Kill 事件细分
+  - condition: "${type} == 'oom_kill' && ${oom_score_adj} > 500"
+    type: "oom_kill_high_score"
+  - condition: "${type} == 'oom_kill' && ${victim_comm} == 'java'"
+    type: "oom_kill_java"
+  - condition: "${type} == 'oom_kill' && ${victim_comm} == 'python'"
+    type: "oom_kill_python"
+  
+  # 内存压力事件细分
+  - condition: "${type} == 'memory_pressure' && ${event} == 'mm_vmscan_kswapd_wake'"
+    type: "kswapd_wake"
+  - condition: "${type} == 'memory_pressure' && ${event} == 'mm_vmscan_direct_reclaim_begin'"
+    type: "direct_reclaim"
+  
+  # 页面回收事件细分
+  - condition: "${type} == 'page_reclaim' && ${event} == 'mm_vmscan_lru_isolate'"
+    type: "lru_isolate"
+  - condition: "${type} == 'page_reclaim' && ${event} == 'mm_vmscan_lru_shrink_inactive'"
+    type: "lru_shrink_inactive"
+  - condition: "${type} == 'page_reclaim' && ${event} == 'mm_vmscan_lru_shrink_active'"
+    type: "lru_shrink_active"
+  
+  # 慢内存分配事件细分
+  - condition: "${type} == 'slow_alloc' && ${success} == 0"
+    type: "alloc_failed"
+  - condition: "${type} == 'slow_alloc' && ${order} > 3"
+    type: "high_order_alloc_slow"
+  
+  # cgroup 压力事件细分
+  - condition: "${type} == 'cgroup_pressure' && ${pressure_level} >= 10"
+    type: "cgroup_critical_pressure"
+  - condition: "${type} == 'cgroup_pressure' && ${pressure_level} >= 5"
+    type: "cgroup_high_pressure"
+
+# 过滤规则
+filter_rules:
+  # OOM Kill 不过滤，全部记录
+  - include: "${type} == 'oom_kill'"
+  
+  # 内存压力事件过滤
+  - include: "${type} == 'memory_pressure'"
+  - exclude: "${comm} == 'kworker'"       # 排除内核工作线程
+  
+  # 页面回收事件过滤 - 只记录有意义的回收
+  - include: "${type} == 'page_reclaim' && ${nr_scanned} > 100"
+  - exclude: "${comm} == 'systemd'"
+  
+  # 慢内存分配过滤
+  - include: "${type} == 'slow_alloc' && ${duration_us} > 5000"  # > 5ms
+  - include: "${type} == 'slow_alloc' && ${success} == 0"        # 失败的分配
+  
+  # 慢 slab 分配过滤
+  - include: "${type} == 'slow_slab_alloc' && ${duration_us} > 10000"  # > 10ms
+  
+  # cgroup 压力过滤
+  - include: "${type} == 'cgroup_pressure' && ${pressure_level} >= 3"
+
+# 示例转换
+# 输入: {"type":"oom_kill","pid":1234,"comm":"systemd","victim_pid":5678,"victim_comm":"nginx","oom_score_adj":200,"ts_ms":1705319445000}
+# 输出: {"type":"oom_kill","pid":1234,"comm":"systemd","victim_pid":5678,"victim_comm":"nginx","oom_score_adj":200,"ts_ms":1705319445000,"severity":"critical"}
+
+# 输入: {"type":"memory_pressure","pid":1,"comm":"kswapd0","event":"mm_vmscan_kswapd_wake","ts_ms":1705319445000}
+# 输出: {"type":"kswapd_wake","pid":1,"comm":"kswapd0","event":"mm_vmscan_kswapd_wake","ts_ms":1705319445000,"severity":"high"}

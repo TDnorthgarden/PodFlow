@@ -2,7 +2,6 @@
 //!
 //! 支持多种 LLM 后端：OpenAI, Claude, 本地模型等
 
-use crate::types::error::NutsError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -586,6 +585,7 @@ struct AnthropicResponse {
 
 #[derive(Debug, Deserialize)]
 struct AnthropicContent {
+    #[allow(dead_code)]
     #[serde(rename = "type")]
     content_type: String,
     text: String,
@@ -614,6 +614,7 @@ struct OpenAiChoice {
 
 #[derive(Debug, Deserialize)]
 struct OpenAiMessage {
+    #[allow(dead_code)]
     role: String,
     content: Option<String>,
 }

@@ -5,16 +5,14 @@
 
 use crate::ai::{
     AiAdapter, AiAdapterConfig, AiEnhancedDiagnosis, AiFallbackMode,
-    EvidenceSufficiency, InsufficientReason, EvidenceCheckConfig,
+    EvidenceSufficiency, EvidenceCheckConfig,
     async_bridge::{AiTaskQueue, AiTask, AiTaskPriority, AiResultStore},
     llm_client::LlmConfig,
 };
 use crate::diagnosis::engine::RuleEngine;
-use crate::types::diagnosis::{DiagnosisResult, DiagnosisStatus, AiStatus};
+use crate::types::diagnosis::{DiagnosisResult, AiStatus};
 use crate::types::evidence::Evidence;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 /// AI 增强诊断引擎
@@ -28,6 +26,7 @@ pub struct AiEnhancedEngine {
     /// AI 结果存储（异步任务完成后的结果）
     ai_results: Arc<AiResultStore>,
     /// 证据检查配置
+    #[allow(dead_code)]
     evidence_check_config: EvidenceCheckConfig,
 }
 

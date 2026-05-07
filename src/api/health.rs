@@ -144,7 +144,7 @@ async fn readiness_handler(State(state): State<Arc<AppState>>) -> Json<Readiness
     });
 
     // NRI 映射表检查
-    let nri_healthy = state.nri_table.pod_count() >= 0; // 总是 true，只要有表即可
+    let nri_healthy = true; // 只要有表即可
     checks.push(ReadinessCheck {
         name: "nri_mapping".to_string(),
         passed: nri_healthy,

@@ -6,8 +6,14 @@
 //! - 归属查询性能
 //! - 持久化状态
 
-use std::sync::atomic::{AtomicU64, Ordering};
+pub mod performance;
+
+pub use performance::{
+    PerformanceMetrics, PerformanceBaseline, PerformanceRating, PerformanceMonitor,
+    PerformanceTimer, PerformanceReport, OperationSummary,
+};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// 指标收集器
 #[derive(Debug)]
@@ -370,6 +376,12 @@ impl NriMetrics {
                 "flushes": self.batch_flushes_total.load(Ordering::Relaxed),
                 "events_processed": self.batch_events_processed.load(Ordering::Relaxed),
                 "queue_depth": self.batch_queue_depth.load(Ordering::Relaxed),
+            },
+            "mapping_table": {
+                "pods": self.mapping_table_pods.load(Ordering::Relaxed),
+                "containers": self.mapping_table_containers.load(Ordering::Relaxed),
+                "cgroups": self.mapping_table_cgroups.load(Ordering::Relaxed),
+                "pids": self.mapping_table_pids.load(Ordering::Relaxed),
             },
         })
     }

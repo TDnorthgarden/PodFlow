@@ -13,9 +13,9 @@
 //! 同时实现了 Runtime 客户端接口，用于向 containerd 注册插件。
 
 use crate::types::error::NutsError;
-use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::sync::Arc;
+use std::os::unix::fs::PermissionsExt;
 use std::time::{Duration, Instant};
 use tokio::net::UnixListener;
 use tokio::sync::{mpsc, RwLock};
@@ -35,8 +35,7 @@ use nri_proto::{
     UpdateContainerRequest, UpdateContainerResponse,
     StopContainerRequest, StopContainerResponse,
     SynchronizeRequest, SynchronizeResponse,
-    RegisterPluginRequest, RegisterPluginResponse,
-    ContainerUpdate, LinuxResources,
+    RegisterPluginRequest,
     plugin_server::{Plugin, PluginServer},
     runtime_client::RuntimeClient,
 };
@@ -577,10 +576,10 @@ impl ContainerdNriPlugin {
     }
 
     /// 向 containerd 运行时注册插件
-    #[instrument(skip(runtime_socket, plugin_socket, plugin_name, plugin_idx))]
+    #[instrument(skip(runtime_socket, _plugin_socket, plugin_name, plugin_idx))]
     async fn register_with_runtime(
         runtime_socket: &str,
-        plugin_socket: &str,
+        _plugin_socket: &str,
         plugin_name: &str,
         plugin_idx: &str,
     ) -> Result<(), ContainerdNriError> {
@@ -633,11 +632,11 @@ impl ContainerdNriPlugin {
                 "[ContainerdNri] Successfully registered with runtime: plugin_name={}, idx={}, response={}",
                 plugin_name,
                 plugin_idx,
-                resp.message
+                &resp.error_message
             );
             Ok(())
         } else {
-            let error_msg = resp.message.clone();
+            let error_msg = resp.error_message.clone();
             error!(
                 "[ContainerdNri] Runtime rejected registration: plugin_name={}, idx={}, error={}",
                 plugin_name,
@@ -651,7 +650,8 @@ impl ContainerdNriPlugin {
     }
 
     /// 转换 containerd Pod 为内部事件
-    fn convert_pod(&self, pod: &nri_proto::PodSandbox) -> NriPodEvent {
+    #[allow(dead_code)]
+fn convert_pod(&self, pod: &nri_proto::PodSandbox) -> NriPodEvent {
         let containers = vec![]; // 会在后续事件中填充
 
         NriPodEvent {
@@ -659,8 +659,6 @@ impl ContainerdNriPlugin {
             pod_name: pod.name.clone(),
             namespace: pod.namespace.clone(),
             containers,
-            cgroup_ids: vec![],
-            pids: vec![],
         }
     }
 
@@ -971,6 +969,6 @@ pub enum ContainerdNriError {
 
 impl From<ContainerdNriError> for NutsError {
     fn from(e: ContainerdNriError) -> Self {
-        NutsError::internal(format!("Containerd NRI error: {}", e))
+        NutsError::internal(&format!("Containerd NRI error: {}", e))
     }
 }

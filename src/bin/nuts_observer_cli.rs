@@ -588,7 +588,7 @@ fn print_trigger_result(result: &Value, format: &str) -> Result<(), Box<dyn std:
 
             println!();
             println!("💡 提示:");
-            if let Some(task_id) = result["task_id"].as_str() {
+            if let Some(_task_id) = result["task_id"].as_str() {
                 println!("  • 诊断结果已在此次响应中返回");
                 println!("  • 使用 '--detail' 选项查看完整结果");
                 println!("  • 使用 '--output json' 查看原始数据");

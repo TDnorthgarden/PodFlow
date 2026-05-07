@@ -6,14 +6,12 @@
 use nuts_observer::api::condition::{ConditionTrigger};
 use nuts_observer::api::nri::router as nri_router;
 use nuts_observer::api::nri_v3_enhanced::{router as nri_v3_enhanced_router, NriV3ApiState};
-use nuts_observer::api::nri_v3::router as nri_v3_router;
 use nuts_observer::api::trigger::router as trigger_router;
 use nuts_observer::api::health::{router as health_router, AppState};
 use nuts_observer::api::diagnosis::{router as diagnosis_router, DiagnosisApiState};
 use axum::Router;
-use nuts_observer::collector::nri_v3::{create_nri_v3, NriV3Config, NriV3};
+use nuts_observer::collector::nri_v3::create_nri_v3;
 use nuts_observer::collector::nri_mapping::{NriMappingTable, NriEvent};
-use nuts_observer::collector::nri_mapping_v2::NriMappingTableV2;
 use nuts_observer::collector::oom_events::{OomEventListener, OomListenerConfig};
 
 // Containerd NRI 官方协议支持 (仅在启用 nri-grpc feature 时可用)
@@ -21,8 +19,8 @@ use nuts_observer::collector::oom_events::{OomEventListener, OomListenerConfig};
 use nuts_observer::collector::nri_containerd::ContainerdNriConfig;
 #[cfg(feature = "nri-grpc")]
 use tokio::sync::mpsc;
-use nuts_observer::config::{Config, ConfigError};
-use nuts_observer::ai::async_bridge::{start_ai_system, AiWorker, AiWorkerConfig, AiCompletionNotification, AiResultStore};
+use nuts_observer::config::Config;
+use nuts_observer::ai::async_bridge::{start_ai_system, AiWorker, AiWorkerConfig, AiResultStore};
 use nuts_observer::ai::{AiAdapter, EvidenceCheckConfig};
 use nuts_observer::publisher::ResultPublisher;
 use nuts_observer::types::error::{NutsError, Result};
@@ -155,7 +153,7 @@ async fn run_server() {
         let nri_v3_table_for_events = Arc::clone(&nri_v3.table());
         tokio::spawn(async move {
             while let Some(event) = nri_event_rx.recv().await {
-                if let Err(e) = nri_v3_table_for_events.update_from_nri(event).await {
+                if let Err(e) = nri_v3_table_for_events.update_from_nri(event) {
                     tracing::warn!("[ContainerdNri] Failed to update mapping table: {}", e);
                 }
             }
@@ -200,7 +198,7 @@ async fn run_server() {
     let config_read = config.read().await;
     
     // 初始化异步AI系统（如果启用）
-    let (mut app, _ai_store) = if config_read.ai.enabled {
+    let (app, _ai_store) = if config_read.ai.enabled {
         let worker_config = AiWorkerConfig {
             adapter_config: config_read.ai.clone().into(),
             max_concurrent: 3,
@@ -218,7 +216,7 @@ async fn run_server() {
         });
         
         // 启动Publisher通知接收任务（增量触发）
-        let _publisher = ResultPublisher::new("/var/log/nuts");
+        let publisher = ResultPublisher::new("/var/log/nuts");
         let store_for_notif = Arc::clone(&store);
         tokio::spawn(async move {
             tracing::info!("[Publisher Notifier] Starting notification receiver...");
@@ -232,16 +230,35 @@ async fn run_server() {
                         
                         // 查询AI增强结果
                         if let Some(enhanced) = store_for_notif.get(&notification.task_id).await {
-                            // 这里简化处理，实际应该从原始存储中获取evidences
-                            // 暂时只发布增强后的诊断
+                            // 获取原始证据数据（现在存储在 enhanced.evidences 中）
+                            let evidences = &enhanced.evidences;
+                            let diagnosis = &enhanced.enhanced;
+                            
                             tracing::info!(
-                                "[Publisher Notifier] AI enhanced result ready for task {} (processing: {}ms)",
+                                "[Publisher Notifier] AI enhanced result ready for task {} (processing: {}ms, evidences: {})",
                                 notification.task_id,
-                                enhanced.processing_ms
+                                enhanced.processing_ms,
+                                evidences.len()
                             );
                             
-                            // TODO: 获取原始证据并调用 publisher.publish_all()
-                            // 当前仅记录日志，证据需要在AI worker中关联存储
+                            // 发布增强后的诊断和原始证据
+                            match publisher.publish_all(diagnosis, evidences).await {
+                                Ok(result) => {
+                                    tracing::info!(
+                                        "[Publisher Notifier] Published AI enhanced result for task {} (files: {}, alert: {})",
+                                        notification.task_id,
+                                        result.local_files.len(),
+                                        result.alert_pushed
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "[Publisher Notifier] Failed to publish AI enhanced result for task {}: {}",
+                                        notification.task_id,
+                                        e
+                                    );
+                                }
+                            }
                         }
                     }
                     None => {

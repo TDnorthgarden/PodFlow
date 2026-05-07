@@ -25,7 +25,10 @@ use tokio::net::UnixListener;
 use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock};
 use tonic::{transport::Server, Request, Response, Status};
-use tracing::{info, warn, error};
+use tracing::{info, error};
+
+// 导入公共认证类型
+use nuts_observer::auth::PeerUid;
 
 // 引入生成的 protobuf 代码
 mod proto {
@@ -489,18 +492,6 @@ async fn create_secure_socket(path: &str) -> std::io::Result<UnixListener> {
     Ok(listener)
 }
 
-/// 验证 UID 是否有权限（通过 Unix Socket credentials）
-/// 
-/// 使用 Linux 的 SO_PEERCRED 选项获取连接对端的 UID。
-/// 这是 Unix Socket 的原生身份验证机制，无法被伪造。
-/// 
-/// TODO: 在 tonic gRPC 层集成此验证（需要自定义 Connection/Accept 逻辑）
-fn get_peer_uid(stream: &tokio::net::UnixStream) -> std::io::Result<u32> {
-    use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
-    
-    let creds = getsockopt(stream, PeerCredentials)?;
-    Ok(creds.uid())
-}
 
 /// 权限验证拦截器
 #[derive(Clone)]
@@ -510,6 +501,7 @@ struct AuthInterceptor {
 }
 
 impl AuthInterceptor {
+    #[allow(dead_code)]
     fn new(allowed_uids: Vec<u32>) -> Self {
         Self {
             allowed_uids: Arc::new(allowed_uids),
@@ -570,10 +562,6 @@ where
     }
 }
 
-/// Peer UID 包装类型（用于请求扩展）
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
-struct PeerUid(u32);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

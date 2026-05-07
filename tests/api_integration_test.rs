@@ -20,8 +20,8 @@ use nuts_observer::collector::nri_mapping::{NriMappingTable, NriPodEvent, NriCon
 async fn test_trigger_endpoint() {
     // 创建共享的 NRI 映射表
     let nri_table = Arc::new(NriMappingTable::new());
-    // 构建应用路由（传入 NRI 映射表）
-    let app = trigger_router(Arc::clone(&nri_table), None);
+    // 构建应用路由（传入 NRI 映射表、AI 队列和 AI 适配器）
+    let app = trigger_router(Arc::clone(&nri_table), None, None);
 
     // 构建触发请求
     let request_body = serde_json::json!({
@@ -245,7 +245,7 @@ async fn test_full_pipeline_nri_to_diagnosis() {
 
     // 步骤 2: 触发诊断（使用相同的 cgroup_id）
     // 使用同一个 nri_table，确保诊断能访问到之前添加的 Pod 信息
-    let trigger_app = trigger_router(Arc::clone(&nri_table), None);
+    let trigger_app = trigger_router(Arc::clone(&nri_table), None, None);
     let trigger_request = serde_json::json!({
         "trigger_type": "manual",
         "target": {
@@ -371,7 +371,7 @@ async fn test_nri_mapping_in_diagnosis() {
     nri_table.update_from_nri(NriEvent::AddOrUpdate(pod)).unwrap();
     
     // 使用相同的 nri_table 创建触发路由
-    let trigger_app = trigger_router(Arc::clone(&nri_table), None);
+    let trigger_app = trigger_router(Arc::clone(&nri_table), None, None);
     
     // 触发诊断请求，引用已存在的 cgroup
     let request_body = serde_json::json!({

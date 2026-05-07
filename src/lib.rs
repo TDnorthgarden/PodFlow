@@ -11,3 +11,4 @@ pub mod publisher;
 pub mod ai;
 pub mod metrics;
 pub mod utils;
+pub mod auth;

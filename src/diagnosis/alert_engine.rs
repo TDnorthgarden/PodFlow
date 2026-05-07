@@ -3,9 +3,9 @@
 //! 基于诊断结果评估告警规则，生成告警实例
 
 use crate::types::alert::*;
-use crate::types::diagnosis::{Conclusion, DiagnosisResult, DiagnosisStatus};
+use crate::types::diagnosis::{DiagnosisResult, DiagnosisStatus};
 use crate::types::evidence::Evidence;
-use crate::types::error::{NutsError, Result};
+use crate::types::error::Result;
 use crate::utils::error_handling::{read_rwlock, write_rwlock};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -181,7 +181,10 @@ impl AlertRuleEngine {
                 let parts: Vec<&str> = pattern.split('*').collect();
                 let title_lower = c.title.to_lowercase();
                 if parts.len() == 2 {
-                    title_lower.starts_with(parts[0]) && title_lower.ends_with(parts[1])
+                    // 处理前缀和后缀通配符
+                    let prefix = parts[0].to_lowercase();
+                    let suffix = parts[1].to_lowercase();
+                    title_lower.starts_with(&prefix) && title_lower.ends_with(&suffix)
                 } else {
                     title_lower.contains(&pattern_lower.replace('*', ""))
                 }
@@ -189,7 +192,9 @@ impl AlertRuleEngine {
                 c.title.to_lowercase().contains(&pattern_lower)
             };
             
-            matches_pattern && c.confidence >= min_confidence
+            let confidence_ok = c.confidence >= min_confidence;
+            
+            matches_pattern && confidence_ok
         })
     }
 
@@ -508,7 +513,7 @@ pub fn default_alert_rules() -> AlertRuleConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::diagnosis::{DiagnosisResult, DiagnosisStatus};
+    use crate::types::diagnosis::{DiagnosisResult, DiagnosisStatus, Conclusion};
 
     fn create_test_diagnosis() -> DiagnosisResult {
         DiagnosisResult {
@@ -589,6 +594,192 @@ mod tests {
 
         let results = engine.evaluate(&diagnosis, &evidences).expect("Evaluation should succeed");
         
+        assert!(results.iter().any(|r| matches!(r, AlertEvaluationResult::Firing(_))));
+    }
+
+    #[test]
+    fn test_case_insensitive_wildcard_match() {
+        // 测试跨大小写通配符匹配：MySQL* 应该匹配 mysql-xxx
+        let rule = AlertRule::new(
+            "mysql-test",
+            "MySQL Test",
+            AlertCondition::ConclusionMatch {
+                conclusion_pattern: "MySQL*".to_string(),
+                min_confidence: 0.5,
+            },
+            AlertSeverity::Medium,
+        );
+        
+        let engine = AlertRuleEngine::new(vec![rule]);
+        
+        // 测试用例1：小写标题应该匹配大写模式
+        let diagnosis1 = DiagnosisResult {
+            schema_version: "diagnosis.v0.2".to_string(),
+            task_id: "task-456".to_string(),
+            status: DiagnosisStatus::Done,
+            runtime: None,
+            trigger: crate::types::diagnosis::TriggerInfo {
+                trigger_type: "manual".to_string(),
+                trigger_reason: "test".to_string(),
+                trigger_time_ms: 2000,
+                matched_condition: None,
+                event_type: None,
+            },
+            evidence_refs: vec![],
+            conclusions: vec![
+                Conclusion {
+                    conclusion_id: "c2".to_string(),
+                    title: "mysql-connection-failed".to_string(), // 小写标题
+                    confidence: 0.9,
+                    evidence_strength: crate::types::diagnosis::EvidenceStrength::High,
+                    severity: Some(2),
+                    details: Some(serde_json::json!({
+                        "description": "MySQL连接失败",
+                        "conclusion_type": "manual"
+                    })),
+                },
+            ],
+            recommendations: vec![],
+            traceability: crate::types::diagnosis::Traceability {
+                references: vec![],
+                engine_version: None,
+            },
+            ai: None,
+        };
+        
+        let evidences = vec![];
+        let results1 = engine.evaluate(&diagnosis1, &evidences).expect("Evaluation should succeed");
+        assert!(results1.iter().any(|r| matches!(r, AlertEvaluationResult::Firing(_))));
+        
+        // 测试用例2：大写标题应该匹配大写模式
+        let diagnosis2 = DiagnosisResult {
+            schema_version: "diagnosis.v0.2".to_string(),
+            task_id: "task-457".to_string(),
+            status: DiagnosisStatus::Done,
+            runtime: None,
+            trigger: crate::types::diagnosis::TriggerInfo {
+                trigger_type: "manual".to_string(),
+                trigger_reason: "test".to_string(),
+                trigger_time_ms: 2000,
+                matched_condition: None,
+                event_type: None,
+            },
+            evidence_refs: vec![],
+            conclusions: vec![
+                Conclusion {
+                    conclusion_id: "c2".to_string(),
+                    title: "MySQL-Connection-Error".to_string(), // 大写标题
+                    confidence: 0.9,
+                    evidence_strength: crate::types::diagnosis::EvidenceStrength::High,
+                    severity: Some(2),
+                    details: Some(serde_json::json!({
+                        "description": "MySQL连接错误",
+                        "conclusion_type": "manual"
+                    })),
+                },
+            ],
+            recommendations: vec![],
+            traceability: crate::types::diagnosis::Traceability {
+                references: vec![],
+                engine_version: None,
+            },
+            ai: None,
+        };
+        
+        let results2 = engine.evaluate(&diagnosis2, &evidences).expect("Evaluation should succeed");
+        assert!(results2.iter().any(|r| matches!(r, AlertEvaluationResult::Firing(_))));
+        
+        // 测试用例3：不匹配的标题不应该触发
+        let diagnosis3 = DiagnosisResult {
+            schema_version: "diagnosis.v0.2".to_string(),
+            task_id: "task-458".to_string(),
+            status: DiagnosisStatus::Done,
+            runtime: None,
+            trigger: crate::types::diagnosis::TriggerInfo {
+                trigger_type: "manual".to_string(),
+                trigger_reason: "test".to_string(),
+                trigger_time_ms: 2000,
+                matched_condition: None,
+                event_type: None,
+            },
+            evidence_refs: vec![],
+            conclusions: vec![
+                Conclusion {
+                    conclusion_id: "c2".to_string(),
+                    title: "postgresql-connection-failed".to_string(), // 不匹配的标题
+                    confidence: 0.9,
+                    evidence_strength: crate::types::diagnosis::EvidenceStrength::High,
+                    severity: Some(2),
+                    details: Some(serde_json::json!({
+                        "description": "PostgreSQL连接失败",
+                        "conclusion_type": "manual"
+                    })),
+                },
+            ],
+            recommendations: vec![],
+            traceability: crate::types::diagnosis::Traceability {
+                references: vec![],
+                engine_version: None,
+            },
+            ai: None,
+        };
+        
+        let results3 = engine.evaluate(&diagnosis3, &evidences).expect("Evaluation should succeed");
+        assert!(results3.is_empty()); // 不应该触发告警
+    }
+
+    #[test]
+    fn test_wildcard_prefix_suffix_match() {
+        // 测试通配符前缀和后缀匹配
+        let rule = AlertRule::new(
+            "prefix-suffix-test",
+            "Prefix Suffix Test",
+            AlertCondition::ConclusionMatch {
+                conclusion_pattern: "Error*Exception".to_string(),
+                min_confidence: 0.6,
+            },
+            AlertSeverity::Medium,
+        );
+        
+        let engine = AlertRuleEngine::new(vec![rule]);
+        
+        // 测试用例：应该匹配前缀和后缀
+        let diagnosis = DiagnosisResult {
+            schema_version: "diagnosis.v0.2".to_string(),
+            task_id: "task-459".to_string(),
+            status: DiagnosisStatus::Done,
+            runtime: None,
+            trigger: crate::types::diagnosis::TriggerInfo {
+                trigger_type: "manual".to_string(),
+                trigger_reason: "test".to_string(),
+                trigger_time_ms: 2000,
+                matched_condition: None,
+                event_type: None,
+            },
+            evidence_refs: vec![],
+            conclusions: vec![
+                Conclusion {
+                    conclusion_id: "c2".to_string(),
+                    title: "Error-Connection-Exception".to_string(), // 匹配前缀和后缀
+                    confidence: 0.9,
+                    evidence_strength: crate::types::diagnosis::EvidenceStrength::High,
+                    severity: Some(2),
+                    details: Some(serde_json::json!({
+                        "description": "连接异常",
+                        "conclusion_type": "manual"
+                    })),
+                },
+            ],
+            recommendations: vec![],
+            traceability: crate::types::diagnosis::Traceability {
+                references: vec![],
+                engine_version: None,
+            },
+            ai: None,
+        };
+        
+        let evidences = vec![];
+        let results = engine.evaluate(&diagnosis, &evidences).expect("Evaluation should succeed");
         assert!(results.iter().any(|r| matches!(r, AlertEvaluationResult::Firing(_))));
     }
 }

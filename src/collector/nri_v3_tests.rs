@@ -10,6 +10,9 @@
 mod tests {
     use crate::collector::nri_mapping_v2::{NriMappingTableV2, PodInfo, ContainerInfo};
     use crate::collector::nri_mapping::{NriMappingTable, PodInfo as NriPodInfo};
+    use crate::collector::nri_v3::{NriV3, NriV3Config, CapacityConfig};
+    use crate::collector::nri_persist::PersistConfig;
+    use crate::collector::nri_batch::BatchProcessorConfig;
     use std::sync::Arc;
     use tokio::time::{sleep, Duration};
 
@@ -229,9 +232,8 @@ mod tests {
     #[tokio::test]
     async fn test_nri_v3_integration() {
         let config = NriV3Config {
-            enable_persist: false,
-            persist_config: PersistConfig::default(),
-            batch_config: BatchProcessorConfig {
+            persistence: PersistConfig::default(),
+            batch: BatchProcessorConfig {
                 worker_threads: 2,
                 max_queue_depth: 100,
                 batch_size: 10,
@@ -239,13 +241,16 @@ mod tests {
                 enable_priority: true,
                 delete_priority_boost: 10,
             },
+            enable_persistence: false,
+            enable_metrics: true,
+            capacity: CapacityConfig::default(),
         };
 
         // 创建 NRI V3 实例
-        let nri_v3 = create_nri_v3(config).await;
+        let nri_v3 = NriV3::new(config).await;
         assert!(nri_v3.is_ok());
 
-        let (v3, _) = nri_v3.unwrap();
+        let v3 = nri_v3.unwrap();
 
         // 提交 Pod 创建事件
         let event = nri_mapping::NriEvent::Add(nri_mapping::NriPodEvent {
@@ -266,7 +271,8 @@ mod tests {
         sleep(Duration::from_millis(200)).await;
 
         let metrics = v3.metrics();
-        assert!(metrics.event_count > 0);
+        let export = metrics.export_prometheus();
+        assert!(export.contains("nri_events_total"));
 
         // 关闭
         v3.shutdown().await;

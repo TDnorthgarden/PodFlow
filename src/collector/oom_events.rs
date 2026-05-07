@@ -80,18 +80,10 @@ impl OomEventListener {
         let (tx, mut rx) = mpsc::channel::<OomEvent>(100);
 
         // 启动 bpftrace 监听 OOM 事件
-        let script = r#"
-            tracepoint:oom:oom_score_adj_update,
-            kprobe:oom_kill_process
-            {
-                printf("{\"type\":\"oom_kill\",\"pid\":%d,\"comm\":\"%s\",\"ts_ms\":%u}\n",
-                    pid, comm, nsecs / 1000000);
-            }
-        "#;
+        let script_path = "scripts/bpftrace/templates/oom_events.bt";
 
-        let mut child = match Command::new("bpftrace")
-            .arg("-e")
-            .arg(script)
+        let mut child = match Command::new("sudo")
+            .args(["bpftrace", script_path])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -133,7 +125,7 @@ impl OomEventListener {
                 event.pid, event.comm
             );
 
-            self.handle_oom_event(event).await;
+            let _ = self.handle_oom_event(event).await;
         }
 
         let _ = child.kill();

@@ -1,7 +1,6 @@
 use crate::types::evidence::*;
 use crate::collector::nri_mapping::{AttributionSource, NriMappingTable};
 use crate::types::error::NutsError;
-use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -24,7 +23,8 @@ pub struct BlockIoCollectorConfig {
     pub target_pids: Option<Vec<u32>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[allow(dead_code)]
 struct BpftraceBlockIoEvent {
     #[serde(rename = "type")]
     event_type: String,

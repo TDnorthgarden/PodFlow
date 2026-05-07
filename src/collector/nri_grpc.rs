@@ -11,7 +11,6 @@
 //! - 更好的生态兼容性
 #![cfg(feature = "nri-grpc")]
 
-use crate::types::error::NutsError;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tonic::{Request, Response, Status, Streaming};
@@ -175,8 +174,11 @@ pub struct NriGrpcService {
 
 #[derive(Debug, Clone)]
 struct PluginInfo {
+    #[allow(dead_code)]
     name: String,
+    #[allow(dead_code)]
     version: String,
+    #[allow(dead_code)]
     supported_events: Vec<nri_proto::EventType>,
 }
 
@@ -554,6 +556,7 @@ impl std::error::Error for GrpcError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::error::NutsError;
 
     #[test]
     fn test_event_conversion() -> Result<(), Box<dyn std::error::Error>> {

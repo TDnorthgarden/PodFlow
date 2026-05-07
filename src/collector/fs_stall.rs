@@ -27,12 +27,16 @@ pub struct FsStallCollectorConfig {
 struct BpftraceFsEvent {
     #[serde(rename = "type")]
     event_type: String,
+    #[allow(dead_code)]
     pid: Option<u32>,
+    #[allow(dead_code)]
     comm: Option<String>,
     syscall_name: Option<String>,
     latency_us: Option<u64>,
     fs_op: Option<String>, // 文件系统操作类型：read/write/open/close/sync
+    #[allow(dead_code)]
     ts_ms: Option<u64>,
+    #[allow(dead_code)]
     #[serde(flatten)]
     extra: HashMap<String, serde_json::Value>,
 }
@@ -68,7 +72,7 @@ pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Result<Evidence,
     let duration_ms = cfg.time_window.end_time_ms - cfg.time_window.start_time_ms;
     let duration_sec = (duration_ms / 1000).clamp(1, 60) as u64;
     
-    let script_path = "scripts/bpftrace/fs/fs_stall.bt";
+    let script_path = "scripts/bpftrace/templates/fs_stall.bt";
     
     // 存储采集结果
     let fs_latencies: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));

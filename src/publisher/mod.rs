@@ -275,6 +275,14 @@ pub struct PublishError {
     pub message: String,
 }
 
+impl std::fmt::Display for PublishError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PublishError[{}]: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for PublishError {}
+
 impl From<std::io::Error> for PublishError {
     fn from(e: std::io::Error) -> Self {
         Self {

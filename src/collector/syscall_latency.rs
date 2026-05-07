@@ -27,11 +27,15 @@ pub struct SyscallCollectorConfig {
 struct BpftraceSyscallEvent {
     #[serde(rename = "type")]
     event_type: String,
+    #[allow(dead_code)]
     pid: Option<u32>,
+    #[allow(dead_code)]
     comm: Option<String>,
     syscall_name: String,
     latency_us: Option<u64>,
+    #[allow(dead_code)]
     ts_ms: Option<u64>,
+    #[allow(dead_code)]
     #[serde(flatten)]
     extra: HashMap<String, serde_json::Value>,
 }
