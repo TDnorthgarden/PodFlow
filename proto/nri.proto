@@ -7,10 +7,14 @@ option go_package = "github.com/containerd/nri/pkg/api;api";
 // Runtime service is the public API runtimes expose for NRI plugins.
 // On this interface RPC requests are initiated by the plugin.
 service Runtime {
-    // RegisterPlugin is used by the plugin to register itself with the runtime.
+    // RegisterPlugin is used by plugin to register itself with the runtime.
     rpc RegisterPlugin(RegisterPluginRequest) returns (RegisterPluginResponse);
+    // UnregisterPlugin is used by plugin to unregister itself from the runtime.
+    rpc UnregisterPlugin(UnregisterPluginRequest) returns (UnregisterPluginResponse);
     // UpdateContainers is used by the plugin to request the runtime to update containers.
     rpc UpdateContainers(UpdateContainersRequest) returns (UpdateContainersResponse);
+    // StateChange is used by plugin to notify about state changes.
+    rpc StateChange(StateChangeRequest) returns (StateChangeResponse);
 }
 
 // Plugin service is the public API plugins must expose for the runtime.
@@ -42,12 +46,49 @@ message RegisterPluginResponse {
     string error_message = 2;
 }
 
+// UnregisterPluginRequest is the request used to unregister a plugin.
+message UnregisterPluginRequest {
+    string plugin_name = 1;
+    string plugin_idx = 2;
+}
+
+// UnregisterPluginResponse is the response to an UnregisterPlugin request.
+message UnregisterPluginResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// StateChangeRequest is the request used to notify about state changes.
+message StateChangeRequest {
+    string plugin_name = 1;
+    string plugin_idx = 2;
+    string state = 3;
+    map<string, string> metadata = 4;
+}
+
+// StateChangeResponse is the response to a StateChange request.
+message StateChangeResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
 // EventCapability defines the events a plugin is interested in.
 enum EventCapability {
     UNKNOWN = 0;
     RUNTIME_EVENTS = 1;
     POD_EVENTS = 2;
     CONTAINER_EVENTS = 3;
+}
+
+// EventType defines the types of events.
+enum EventType {
+    UNKNOWN_EVENT = 0;
+    RUN_POD_SANDBOX = 1;
+    STOP_POD_SANDBOX = 2;
+    CREATE_CONTAINER = 3;
+    UPDATE_CONTAINER = 4;
+    STOP_CONTAINER = 5;
+    REMOVE_CONTAINER = 6;
 }
 
 // UpdateContainersRequest is used to request container updates.

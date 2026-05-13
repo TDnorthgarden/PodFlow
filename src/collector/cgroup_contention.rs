@@ -5,7 +5,8 @@
 //! - 内存压力（memory.pressure）
 //! - IO 等待时间（io.stat）
 
-use crate::collector::nri_mapping::{NriMappingTable, AttributionSource};
+use crate::collector::nri_mapping_v2::NriMappingTableV2;
+use crate::collector::nri_mapping_v2::AttributionSource;
 use crate::types::evidence::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -25,7 +26,7 @@ pub struct CgroupContentionConfig {
     pub requested_metrics: Vec<String>,
     pub requested_events: Vec<String>,
     /// NRI 映射表引用
-    pub nri_table: Option<Arc<NriMappingTable>>,
+    pub nri_table: Option<Arc<NriMappingTableV2>>,
 }
 
 /// cgroup 资源争抢统计（用于诊断展示）

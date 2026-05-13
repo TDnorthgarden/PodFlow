@@ -19,17 +19,18 @@ use tokio::time::{sleep, Duration};
 
 // 引入被测模块
 use nuts_observer::api::trigger::router as trigger_router;
-use nuts_observer::collector::nri_mapping::{NriMappingTable, NriPodEvent, NriContainerInfo, NriEvent};
+use nuts_observer::collector::nri_mapping_v2::NriMappingTableV2;
+use nuts_observer::collector::nri_mapping_v2::{NriPodEvent, NriContainerInfo, NriEvent};
 use nuts_observer::publisher::ResultPublisher;
-use nuts_observer::ai::async_bridge::{start_ai_system, AiWorkerConfig, AiTaskQueue, AiResultStore};
+use nuts_observer::ai::async_bridge::{start_ai_system, AiWorkerConfig};
 use nuts_observer::ai::{AiAdapter, AiAdapterConfig, AiFallbackMode};
 use nuts_observer::types::diagnosis::AiStatus;
 use nuts_observer::types::evidence::{TimeWindow, Evidence};
 use nuts_observer::types::diagnosis::DiagnosisResult;
 
 /// 创建测试用的 NRI 映射表和 Pod 数据
-fn create_test_nri_table() -> Arc<NriMappingTable> {
-    let nri_table = Arc::new(NriMappingTable::new());
+fn create_test_nri_table() -> Arc<NriMappingTableV2> {
+    let nri_table = Arc::new(NriMappingTableV2::new());
     
     // 添加测试 Pod
     let pod = NriPodEvent {
@@ -453,7 +454,7 @@ async fn test_e2e_publisher_integration() {
 #[tokio::test]
 async fn test_e2e_error_handling() {
     // 1. 设置测试环境
-    let nri_table = Arc::new(NriMappingTable::new()); // 空的映射表
+    let nri_table = Arc::new(NriMappingTableV2::new()); // 空的映射表
     let app = trigger_router(Arc::clone(&nri_table), None, None);
     
     // 2. 构建无效的触发请求（Pod 不存在）

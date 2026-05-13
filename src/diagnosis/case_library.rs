@@ -604,17 +604,17 @@ impl CaseLibrary {
     }
 
     /// 列出所有案例
-    pub fn list_cases(&self) -> Vec<&FaultCase> {
-        self.cases.values().collect()
+    pub fn list_cases(&self) -> Vec<FaultCase> {
+        self.cases.values().cloned().collect()
     }
 
     /// 根据证据类型查找相关案例
-    pub fn find_cases_by_evidence(&self, evidence_type: &str) -> Vec<&FaultCase> {
+    pub fn find_cases_by_evidence(&self, evidence_type: &str) -> Vec<FaultCase> {
         self.evidence_index
             .get(evidence_type)
             .map(|ids| {
                 ids.iter()
-                    .filter_map(|id| self.cases.get(id))
+                    .filter_map(|id| self.cases.get(id).cloned())
                     .collect()
             })
             .unwrap_or_default()

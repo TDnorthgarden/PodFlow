@@ -13,7 +13,7 @@ use axum::{
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use crate::collector::nri_v3::NriV3;
-use crate::collector::nri_mapping::{PodInfo, ContainerMapping, NriEvent, NriPodEvent, NriContainerInfo};
+use crate::collector::nri_mapping_v2::{PodInfo, ContainerMapping, NriEvent, NriPodEvent, NriContainerInfo};
 
 /// API 状态
 #[derive(Clone)]

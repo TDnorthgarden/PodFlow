@@ -9,6 +9,214 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+/// NRI (Node Resource Interface) 配置
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NriConfig {
+    /// 是否启用 containerd NRI 插件
+    #[serde(default = "default_nri_enabled")]
+    pub enabled: bool,
+    /// 插件监听的 Unix Socket 路径
+    #[serde(default = "default_nri_socket_path")]
+    pub socket_path: String,
+    /// 插件名称
+    #[serde(default = "default_nri_plugin_name")]
+    pub plugin_name: String,
+    /// 插件索引 (00-99)
+    #[serde(default = "default_nri_plugin_idx")]
+    pub plugin_idx: String,
+    /// NRI 协议版本
+    #[serde(default = "default_nri_version")]
+    pub nri_version: String,
+    /// 是否向 containerd 自动注册
+    #[serde(default = "default_true")]
+    pub auto_register: bool,
+    /// containerd NRI Runtime Socket 路径
+    #[serde(default = "default_nri_runtime_socket_path")]
+    pub runtime_socket_path: String,
+    /// 重试配置
+    #[serde(default)]
+    pub retry: NriRetryConfig,
+    /// 熔断器配置
+    #[serde(default)]
+    pub circuit_breaker: NriCircuitBreakerConfig,
+    /// NRI V3 特定配置
+    #[serde(default)]
+    pub v3: NriV3ConfigSection,
+}
+
+/// NRI V3 配置段
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct NriV3ConfigSection {
+    /// 是否启用 V3 优化
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 持久化配置
+    #[serde(default)]
+    pub persistence: NriV3PersistConfig,
+    /// 批量处理配置
+    #[serde(default)]
+    pub batch: NriV3BatchConfig,
+    /// 是否启用指标收集
+    #[serde(default = "default_true")]
+    pub enable_metrics: bool,
+    /// 预分配容量配置
+    #[serde(default)]
+    pub capacity: NriV3CapacityConfig,
+}
+
+/// NRI V3 持久化配置
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct NriV3PersistConfig {
+    /// 是否启用持久化
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 数据库路径
+    #[serde(default = "default_v3_db_path")]
+    pub db_path: String,
+    /// 快照间隔（秒）
+    #[serde(default = "default_snapshot_interval")]
+    pub snapshot_interval_secs: u64,
+    /// 最大快照数量
+    #[serde(default = "default_max_snapshots")]
+    pub max_snapshots: u32,
+    /// 是否启用压缩
+    #[serde(default = "default_true")]
+    pub compression: bool,
+}
+
+/// NRI V3 批量处理配置
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct NriV3BatchConfig {
+    /// 工作线程数
+    #[serde(default = "default_worker_threads")]
+    pub worker_threads: usize,
+    /// 最大队列深度
+    #[serde(default = "default_max_queue_depth")]
+    pub max_queue_depth: usize,
+    /// 批量大小
+    #[serde(default = "default_batch_size")]
+    pub batch_size: usize,
+    /// 最大缓冲时间（毫秒）
+    #[serde(default = "default_max_buffer_ms")]
+    pub max_buffer_ms: u64,
+    /// 是否启用优先级
+    #[serde(default = "default_true")]
+    pub enable_priority: bool,
+    /// DELETE 事件优先级加成
+    #[serde(default = "default_delete_priority_boost")]
+    pub delete_priority_boost: u8,
+}
+
+/// NRI V3 容量配置
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct NriV3CapacityConfig {
+    /// Pod 数量
+    #[serde(default = "default_capacity_pods")]
+    pub pods: usize,
+    /// 容器数量
+    #[serde(default = "default_capacity_containers")]
+    pub containers: usize,
+    /// Cgroup 数量
+    #[serde(default = "default_capacity_cgroups")]
+    pub cgroups: usize,
+    /// PID 数量
+    #[serde(default = "default_capacity_pids")]
+    pub pids: usize,
+}
+
+fn default_nri_enabled() -> bool { true }
+fn default_nri_socket_path() -> String { "/var/run/nri/nuts-observer.sock".to_string() }
+fn default_nri_plugin_name() -> String { "nuts-observer".to_string() }
+fn default_nri_plugin_idx() -> String { "00".to_string() }
+fn default_nri_version() -> String { "1.0.0".to_string() }
+fn default_nri_runtime_socket_path() -> String { "/var/run/nri/nri.sock".to_string() }
+fn default_true() -> bool { true }
+
+// V3 配置默认值函数
+fn default_v3_db_path() -> String { "/var/lib/nuts-observer/nri_v3.db".to_string() }
+fn default_snapshot_interval() -> u64 { 300 }
+fn default_max_snapshots() -> u32 { 10 }
+fn default_worker_threads() -> usize { 2 }
+fn default_max_queue_depth() -> usize { 10000 }
+fn default_batch_size() -> usize { 100 }
+fn default_max_buffer_ms() -> u64 { 100 }
+fn default_delete_priority_boost() -> u8 { 10 }
+fn default_capacity_pods() -> usize { 1000 }
+fn default_capacity_containers() -> usize { 2000 }
+fn default_capacity_cgroups() -> usize { 2000 }
+fn default_capacity_pids() -> usize { 10000 }
+
+/// NRI 重试配置
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NriRetryConfig {
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    #[serde(default = "default_initial_delay_ms")]
+    pub initial_delay_ms: u64,
+    #[serde(default = "default_max_delay_ms")]
+    pub max_delay_ms: u64,
+    #[serde(default = "default_backoff_multiplier")]
+    pub backoff_multiplier: f64,
+}
+
+fn default_max_retries() -> u32 { 5 }
+fn default_initial_delay_ms() -> u64 { 100 }
+fn default_max_delay_ms() -> u64 { 30000 }
+fn default_backoff_multiplier() -> f64 { 2.0 }
+
+impl Default for NriRetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: default_max_retries(),
+            initial_delay_ms: default_initial_delay_ms(),
+            max_delay_ms: default_max_delay_ms(),
+            backoff_multiplier: default_backoff_multiplier(),
+        }
+    }
+}
+
+/// NRI 熔断器配置
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NriCircuitBreakerConfig {
+    #[serde(default = "default_failure_threshold")]
+    pub failure_threshold: u32,
+    #[serde(default = "default_reset_timeout_secs")]
+    pub reset_timeout_secs: u64,
+    #[serde(default = "default_half_open_max_calls")]
+    pub half_open_max_calls: u32,
+}
+
+fn default_failure_threshold() -> u32 { 5 }
+fn default_reset_timeout_secs() -> u64 { 30 }
+fn default_half_open_max_calls() -> u32 { 3 }
+
+impl Default for NriCircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: default_failure_threshold(),
+            reset_timeout_secs: default_reset_timeout_secs(),
+            half_open_max_calls: default_half_open_max_calls(),
+        }
+    }
+}
+
+impl Default for NriConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_nri_enabled(),
+            socket_path: default_nri_socket_path(),
+            plugin_name: default_nri_plugin_name(),
+            plugin_idx: default_nri_plugin_idx(),
+            nri_version: default_nri_version(),
+            auto_register: default_true(),
+            runtime_socket_path: default_nri_runtime_socket_path(),
+            retry: NriRetryConfig::default(),
+            circuit_breaker: NriCircuitBreakerConfig::default(),
+            v3: NriV3ConfigSection::default(),
+        }
+    }
+}
+
 /// 主配置结构
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -33,6 +241,9 @@ pub struct Config {
     /// 权限控制配置
     #[serde(default)]
     pub permission: PermissionConfig,
+    /// NRI 配置
+    #[serde(default)]
+    pub nri: NriConfig,
 }
 
 fn default_output_dir() -> String {
@@ -53,6 +264,7 @@ impl Default for Config {
             output_dir: default_output_dir(),
             log_level: default_log_level(),
             permission: PermissionConfig::default(),
+            nri: NriConfig::default(),
         }
     }
 }
@@ -73,7 +285,7 @@ fn default_bind_address() -> String {
 }
 
 fn default_port() -> u16 {
-    3000
+    8080
 }
 
 impl Default for ServerConfig {
@@ -108,7 +320,7 @@ pub struct AiConfig {
 }
 
 fn default_ai_endpoint() -> String {
-    "http://localhost:8000/v1/chat/completions".to_string()
+    "http://localhost:8080/v1/chat/completions".to_string()
 }
 
 fn default_ai_model() -> String {
@@ -375,7 +587,7 @@ impl Config {
             server: ServerConfig::default(),
             ai: AiConfig {
                 enabled: true,
-                endpoint: "http://localhost:8000/v1/chat/completions".to_string(),
+                endpoint: "http://localhost:8080/v1/chat/completions".to_string(),
                 api_key: Some("your-api-key-here".to_string()),
                 model: "nuts-ai-diagnosis".to_string(),
                 timeout_secs: 60,
@@ -416,6 +628,7 @@ impl Config {
             output_dir: "/tmp/nuts".to_string(),
             log_level: "info".to_string(),
             permission: PermissionConfig::default(),
+            nri: NriConfig::default(),
         }
     }
 }
@@ -511,7 +724,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.server.port, 3000);
+        assert_eq!(config.server.port, 8080);
         assert!(!config.ai.enabled);
         assert!(!config.alert.enabled);
     }

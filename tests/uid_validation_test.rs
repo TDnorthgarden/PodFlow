@@ -268,7 +268,7 @@ async fn test_uid_validation_integration() {
     println!("📝 验证 collector_daemon 编译...");
 
     let check_result = Command::new("cargo")
-        .args(&["check", "--bin", "nuts-collector-daemon"])
+        .args(&["check", "--bin", "nuts-collector-daemon", "--features", "nri-grpc"])
         .output();
 
     assert!(check_result.is_ok(), "应该能够编译 collector_daemon");
@@ -279,7 +279,7 @@ async fn test_uid_validation_integration() {
     println!("🔍 验证参数处理...");
 
     let help_result = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-collector-daemon", "--", "--help"])
+        .args(&["run", "--bin", "nuts-collector-daemon", "--features", "nri-grpc", "--", "--help"])
         .output();
 
     assert!(help_result.is_ok(), "应该能够处理 --help 参数");

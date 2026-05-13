@@ -6,15 +6,154 @@
 //! - 添加归属查询缓存，减少重复计算
 
 use dashmap::DashMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
 
-// 复用 V1 的所有数据结构
-pub use super::nri_mapping::{
-    AttributionError, AttributionInfo, AttributionSource, AttributionStatus,
-    CgroupMapping, ContainerMapping, NriContainerInfo, NriEvent, NriPodEvent, PidMapping,
-    PodInfo,  // 复用 V1 的 PodInfo
-};
+/// Pod 信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PodInfo {
+    pub pod_uid: String,
+    pub pod_name: String,
+    pub namespace: String,
+    pub containers: Vec<ContainerMapping>,
+}
+
+/// 容器映射信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerMapping {
+    pub container_id: String,
+    pub pod_uid: String,
+    pub cgroup_ids: Vec<String>,
+}
+
+/// cgroup 映射信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CgroupMapping {
+    pub cgroup_id: String,
+    pub pod_uid: Option<String>,
+    pub container_id: Option<String>,
+    pub pids: Vec<u32>,
+}
+
+/// PID 映射信息（兜底查询用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PidMapping {
+    pub pid: u32,
+    pub cgroup_id: String,
+}
+
+/// 归属查询结果
+#[derive(Debug, Clone)]
+pub struct AttributionInfo {
+    /// Pod UID（可能为 None）
+    pub pod_uid: Option<String>,
+    /// 容器 ID（可能为 None）
+    pub container_id: Option<String>,
+    /// cgroup ID
+    pub cgroup_id: String,
+    /// 归属状态
+    pub status: AttributionStatus,
+    /// 置信度 (0.0 - 1.0)
+    pub confidence: f64,
+    /// 归属来源
+    pub source: AttributionSource,
+    /// 映射版本/时戳
+    pub mapping_version: String,
+}
+
+/// 归属状态
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttributionStatus {
+    /// NRI 映射确认
+    NriMapped,
+    /// PID->cgroup 回退归属
+    PidCgroupFallback,
+    /// 归属不确定
+    Unknown,
+}
+
+impl std::fmt::Display for AttributionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AttributionStatus::NriMapped => write!(f, "nri_mapped"),
+            AttributionStatus::PidCgroupFallback => write!(f, "pid_cgroup_fallback"),
+            AttributionStatus::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+/// 归属来源
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttributionSource {
+    /// NRI 直接提供
+    Nri,
+    /// PID 回退查询
+    PidMap,
+    /// 无法确定
+    Uncertain,
+}
+
+/// NRI 事件类型
+#[derive(Debug, Clone)]
+pub enum NriEvent {
+    /// Pod/容器新增或更新
+    AddOrUpdate(NriPodEvent),
+    /// Pod 删除（整个 Pod 被移除）
+    Delete { pod_uid: String },
+    /// 容器移除（Pod 仍在，仅移除单个容器）
+    RemoveContainer {
+        pod_uid: String,
+        container_id: String,
+    },
+}
+
+/// NRI Pod 事件详情
+#[derive(Debug, Clone)]
+pub struct NriPodEvent {
+    pub pod_uid: String,
+    pub pod_name: String,
+    pub namespace: String,
+    pub containers: Vec<NriContainerInfo>,
+}
+
+/// NRI 容器信息
+#[derive(Debug, Clone)]
+pub struct NriContainerInfo {
+    pub container_id: String,
+    pub cgroup_ids: Vec<String>,
+    pub pids: Vec<u32>,
+}
+
+/// 归属错误类型
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttributionError {
+    /// NRI 服务不可用
+    NriUnavailable,
+    /// 映射缺失
+    MappingMissing,
+    /// 映射过期
+    MappingStale,
+    /// 采集期间 Pod 被删除
+    PodDeletedDuringWindow,
+    /// 归属不确定
+    AttributionUncertain,
+}
+
+impl std::fmt::Display for AttributionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AttributionError::NriUnavailable => write!(f, "NRI_UNAVAILABLE"),
+            AttributionError::MappingMissing => write!(f, "MAPPING_MISSING"),
+            AttributionError::MappingStale => write!(f, "MAPPING_STALE"),
+            AttributionError::PodDeletedDuringWindow => write!(f, "POD_DELETED_DURING_WINDOW"),
+            AttributionError::AttributionUncertain => write!(f, "ATTRIBUTION_UNCERTAIN"),
+        }
+    }
+}
+
+impl std::error::Error for AttributionError {}
 
 /// 高性能 NRI 映射表 V2
 ///
@@ -78,6 +217,9 @@ impl NriMappingTableV2 {
             }
             NriEvent::Delete { pod_uid } => {
                 self.handle_delete(&pod_uid)
+            }
+            NriEvent::RemoveContainer { pod_uid, container_id } => {
+                self.handle_remove_container(&pod_uid, &container_id)
             }
         }
     }
@@ -169,6 +311,32 @@ impl NriMappingTableV2 {
                     }
                 }
             }
+        }
+
+        // 原子更新最后时间戳
+        let now = chrono::Utc::now().timestamp_millis();
+        self.last_update_ms.store(now, Ordering::Release);
+
+        Ok(())
+    }
+
+    /// 处理 RemoveContainer 事件（仅移除单个容器，保留 Pod）
+    fn handle_remove_container(&self, pod_uid: &str, container_id: &str) -> Result<(), AttributionError> {
+        // 1. 从 container_map 获取并删除容器信息
+        if let Some((_, container)) = self.container_map.remove(container_id) {
+            // 2. 清理 cgroup_map 和 pid_map
+            for cgroup_id in &container.cgroup_ids {
+                if let Some((_, cgroup)) = self.cgroup_map.remove(cgroup_id) {
+                    for pid in &cgroup.pids {
+                        self.pid_map.remove(pid);
+                    }
+                }
+            }
+        }
+
+        // 3. 从 Pod 的容器列表中移除该容器
+        if let Some(mut pod_ref) = self.pod_map.get_mut(pod_uid) {
+            pod_ref.containers.retain(|c| c.container_id != container_id);
         }
 
         // 原子更新最后时间戳

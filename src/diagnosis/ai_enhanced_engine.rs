@@ -103,7 +103,7 @@ impl AiEnhancedEngine {
 
         let api_key = std::env::var("NUTS_AI_API_KEY").ok();
         let endpoint = std::env::var("NUTS_AI_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:8000/v1/chat/completions".to_string());
+            .unwrap_or_else(|_| "http://localhost:8080/v1/chat/completions".to_string());
         let result_ttl_secs = std::env::var("NUTS_AI_RESULT_TTL_SECS")
             .ok()
             .and_then(|v| v.parse().ok())

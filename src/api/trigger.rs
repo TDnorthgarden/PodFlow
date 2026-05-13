@@ -7,7 +7,7 @@ use crate::ai::{AiAdapter, EvidenceSufficiency};
 use crate::collector::block_io::{run_block_io_collect_poc, BlockIoCollectorConfig};
 use crate::collector::cgroup_contention::{run_cgroup_contention_collect_poc, CgroupContentionConfig};
 use crate::collector::network::{run_network_collect_poc, NetworkCollectorConfig};
-use crate::collector::nri_mapping::NriMappingTable;
+use crate::collector::nri_mapping_v2::NriMappingTableV2;
 use crate::collector::syscall_latency::{run_syscall_collect_poc, SyscallCollectorConfig};
 use crate::collector::fs_stall::{run_fs_stall_collect_poc, FsStallCollectorConfig};
 use crate::diagnosis::engine::RuleEngine;
@@ -52,16 +52,16 @@ pub struct CollectionOptions {
 
 /// 创建触发器路由
 ///
-/// 需要传入共享的 NriMappingTable 用于证据采集
+/// 需要传入共享的 NriMappingTableV2 用于证据采集
 /// 可选传入 AI 任务队列和 AI 适配器用于异步 AI 增强
-pub fn router(nri_table: Arc<NriMappingTable>, ai_queue: Option<Arc<AiTaskQueue>>, ai_adapter: Option<Arc<AiAdapter>>) -> Router {
+pub fn router(nri_table: Arc<NriMappingTableV2>, ai_queue: Option<Arc<AiTaskQueue>>, ai_adapter: Option<Arc<AiAdapter>>) -> Router {
     Router::new()
         .route("/v1/diagnostics:trigger", post(trigger_handler))
         .with_state((nri_table, ai_queue, ai_adapter))
 }
 
 async fn trigger_handler(
-    State((nri_table, ai_queue, ai_adapter)): State<(Arc<NriMappingTable>, Option<Arc<AiTaskQueue>>, Option<Arc<AiAdapter>>)>,
+    State((nri_table, ai_queue, ai_adapter)): State<(Arc<NriMappingTableV2>, Option<Arc<AiTaskQueue>>, Option<Arc<AiAdapter>>)>,
     Json(req): Json<TriggerRequest>
 ) -> Result<Json<serde_json::Value>, TriggerError> {
     let task_id = uuid::Uuid::new_v4().to_string();
@@ -76,7 +76,7 @@ async fn trigger_handler(
     let mut evidences: Vec<Evidence> = Vec::new();
 
     // NRI 映射表已接入：通过 axum State 从全局状态传入
-    let nri_table: Option<Arc<NriMappingTable>> = Some(nri_table);
+    let nri_table: Option<Arc<NriMappingTableV2>> = Some(nri_table);
 
     // 采集 network 证据
     if evidence_types.contains(&"network".to_string()) {

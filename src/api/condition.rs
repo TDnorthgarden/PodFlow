@@ -3,7 +3,7 @@ use crate::collector::cgroup_contention::{run_cgroup_contention_collect_poc, Cgr
 use crate::collector::network::{run_network_collect_poc, NetworkCollectorConfig};
 use crate::collector::syscall_latency::{run_syscall_collect_poc, SyscallCollectorConfig};
 use crate::collector::fs_stall::{run_fs_stall_collect_poc, FsStallCollectorConfig};
-use crate::collector::nri_mapping::NriMappingTable;
+use crate::collector::nri_mapping_v2::NriMappingTableV2;
 use crate::diagnosis::engine::RuleEngine;
 use crate::publisher::ResultPublisher;
 use crate::types::evidence::{PodInfo, TimeWindow, Evidence};
@@ -91,7 +91,7 @@ impl ComparisonOperator {
 pub struct ConditionTrigger {
     config: ConditionTriggerConfig,
     /// NRI 映射表
-    nri_table: Option<Arc<NriMappingTable>>,
+    nri_table: Option<Arc<NriMappingTableV2>>,
     /// 已触发记录（用于幂等）
     triggered_records: Arc<Mutex<HashMap<String, i64>>>,
     /// 冷却期（毫秒）- 同一条件在冷却期内不重复触发
@@ -100,7 +100,7 @@ pub struct ConditionTrigger {
 
 impl ConditionTrigger {
     /// 创建新的条件触发器
-    pub fn new(config: ConditionTriggerConfig, nri_table: Option<Arc<NriMappingTable>>) -> Self {
+    pub fn new(config: ConditionTriggerConfig, nri_table: Option<Arc<NriMappingTableV2>>) -> Self {
         Self {
             config,
             nri_table,

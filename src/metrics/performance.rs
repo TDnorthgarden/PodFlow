@@ -2,7 +2,7 @@
 //!
 //! 提供性能监控、分析和优化建议
 
-use std::time::{Duration, Instant};
+use std::time::{Instant, Duration};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
@@ -406,5 +406,16 @@ mod tests {
 
         let elapsed_ms = timer.elapsed_ms();
         assert!(elapsed_ms >= 10.0);
+    }
+}
+
+impl Default for PerformanceMetrics {
+    fn default() -> Self {
+        Self {
+            operation: String::new(),
+            duration_ms: 0.0,
+            memory_bytes: None,
+            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+        }
     }
 }
