@@ -13,6 +13,7 @@
 //! 同时实现了 Runtime 客户端接口，用于向 containerd 注册插件。
 
 use crate::types::error::NutsError;
+use crate::metrics::UnifiedMetrics;
 use std::path::Path;
 use std::sync::Arc;
 use std::os::unix::fs::PermissionsExt;
@@ -36,11 +37,12 @@ use nri_proto::{
     StopContainerRequest, StopContainerResponse,
     SynchronizeRequest, SynchronizeResponse,
     RegisterPluginRequest,
+    UnregisterPluginRequest,
     plugin_server::{Plugin, PluginServer},
     runtime_client::RuntimeClient,
 };
 
-use super::nri_mapping::{NriContainerInfo, NriEvent, NriPodEvent};
+use super::nri_mapping_v2::{NriContainerInfo, NriEvent, NriPodEvent};
 use super::nri_mapping_v2::NriMappingTableV2;
 
 /// Containerd NRI Plugin 配置
@@ -238,6 +240,48 @@ impl ContainerdNriConfig {
             }
         }
     }
+
+    /// 从主配置文件的 NRI 段创建，环境变量可覆盖
+    pub fn from_nri_config(nri: &crate::config::NriConfig) -> Self {
+        let mut config = Self {
+            socket_path: nri.socket_path.clone(),
+            plugin_name: nri.plugin_name.clone(),
+            plugin_idx: nri.plugin_idx.clone(),
+            nri_version: nri.nri_version.clone(),
+            auto_register: nri.auto_register,
+            runtime_socket_path: nri.runtime_socket_path.clone(),
+            retry_config: RetryConfig {
+                max_retries: nri.retry.max_retries,
+                initial_delay: std::time::Duration::from_millis(nri.retry.initial_delay_ms),
+                max_delay: std::time::Duration::from_millis(nri.retry.max_delay_ms),
+                backoff_multiplier: nri.retry.backoff_multiplier,
+            },
+            circuit_breaker_config: CircuitBreakerConfig {
+                failure_threshold: nri.circuit_breaker.failure_threshold,
+                reset_timeout: std::time::Duration::from_secs(nri.circuit_breaker.reset_timeout_secs),
+                half_open_max_calls: nri.circuit_breaker.half_open_max_calls,
+            },
+        };
+
+        // 环境变量覆盖
+        use std::env;
+        if let Ok(val) = env::var("NUTS_NRI_SOCKET_PATH") {
+            if !val.is_empty() { config.socket_path = val; }
+        }
+        if let Ok(val) = env::var("NUTS_NRI_PLUGIN_NAME") {
+            if !val.is_empty() { config.plugin_name = val; }
+        }
+        if let Ok(val) = env::var("NUTS_NRI_RUNTIME_SOCKET") {
+            if !val.is_empty() { config.runtime_socket_path = val; }
+        }
+
+        if let Err(e) = config.validate() {
+            warn!("[ContainerdNri] Config from nri section validation failed: {}", e);
+        }
+
+        info!("[ContainerdNri] Configuration loaded from config.yaml nri section (with env overrides)");
+        config
+    }
 }
 
 /// 配置验证错误
@@ -362,50 +406,6 @@ impl CircuitBreaker {
     }
 }
 
-/// NRI 插件指标
-#[derive(Debug, Default)]
-pub struct NriMetrics {
-    /// 总事件数
-    pub events_total: std::sync::atomic::AtomicU64,
-    /// 成功处理的事件数
-    pub events_success: std::sync::atomic::AtomicU64,
-    /// 失败的事件数
-    pub events_failed: std::sync::atomic::AtomicU64,
-    /// 重试次数
-    pub retry_count: std::sync::atomic::AtomicU64,
-    /// 熔断器打开次数
-    pub circuit_breaker_opened: std::sync::atomic::AtomicU64,
-    /// 当前连接状态 (1=connected, 0=disconnected)
-    pub connected: std::sync::atomic::AtomicU32,
-}
-
-impl NriMetrics {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn record_event(&self, success: bool) {
-        self.events_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if success {
-            self.events_success.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        } else {
-            self.events_failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
-
-    pub fn record_retry(&self) {
-        self.retry_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    pub fn record_circuit_breaker_opened(&self) {
-        self.circuit_breaker_opened.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    pub fn set_connected(&self, connected: bool) {
-        self.connected.store(if connected { 1 } else { 0 }, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
 /// Containerd NRI Plugin 服务实现
 pub struct ContainerdNriPlugin {
     config: ContainerdNriConfig,
@@ -413,7 +413,7 @@ pub struct ContainerdNriPlugin {
     event_tx: mpsc::Sender<NriEvent>,
     configured: Arc<RwLock<bool>>,
     circuit_breaker: Arc<CircuitBreaker>,
-    metrics: Arc<NriMetrics>,
+    metrics: Arc<UnifiedMetrics>,
 }
 
 impl ContainerdNriPlugin {
@@ -424,7 +424,7 @@ impl ContainerdNriPlugin {
         event_tx: mpsc::Sender<NriEvent>,
     ) -> Self {
         let circuit_breaker = Arc::new(CircuitBreaker::new(config.circuit_breaker_config.clone()));
-        let metrics = Arc::new(NriMetrics::new());
+        let metrics = crate::metrics::create_metrics();
 
         Self {
             config,
@@ -432,12 +432,12 @@ impl ContainerdNriPlugin {
             event_tx,
             configured: Arc::new(RwLock::new(false)),
             circuit_breaker,
-            metrics,
+            metrics: metrics.into(),
         }
     }
 
     /// 获取指标
-    pub fn metrics(&self) -> Arc<NriMetrics> {
+    pub fn metrics(&self) -> Arc<UnifiedMetrics> {
         Arc::clone(&self.metrics)
     }
 
@@ -493,14 +493,33 @@ impl ContainerdNriPlugin {
             let metrics = Arc::clone(&self.metrics);
 
             tokio::spawn(async move {
+                // 等待插件自身的 socket 就绪（gRPC server 需要先启动）
+                let socket_path_obj = Path::new(&socket_path);
+                for wait in 0..50 {
+                    if socket_path_obj.exists() {
+                        debug!("[ContainerdNri] Plugin socket {} is ready", socket_path);
+                        break;
+                    }
+                    if wait == 49 {
+                        warn!(
+                            "[ContainerdNri] Plugin socket {} not ready after 5s, proceeding anyway",
+                            socket_path
+                        );
+                    }
+                    sleep(Duration::from_millis(100)).await;
+                }
+
                 let start_time = Instant::now();
                 let mut attempts = 0;
+                let mut in_background_retry = false;
 
                 loop {
                     attempts += 1;
                     debug!(
-                        "[ContainerdNri] Registration attempt {} to {}",
-                        attempts, runtime_socket
+                        "[ContainerdNri] Registration attempt {} to {}{}",
+                        attempts,
+                        runtime_socket,
+                        if in_background_retry { " (background)" } else { "" }
                     );
 
                     match Self::register_with_runtime(
@@ -520,29 +539,39 @@ impl ContainerdNriPlugin {
                         }
                         Err(e) => {
                             metrics.record_retry();
-                            if attempts >= retry_config.max_retries {
+
+                            // 计算延迟：初始阶段用指数退避，后台阶段用固定 30s
+                            let delay = if !in_background_retry && attempts < retry_config.max_retries {
+                                std::cmp::min(
+                                    retry_config.initial_delay.mul_f64(
+                                        retry_config.backoff_multiplier.powi(attempts as i32 - 1)
+                                    ),
+                                    retry_config.max_delay,
+                                )
+                            } else if !in_background_retry {
+                                // 达到最大重试次数，切换到后台持续重试
                                 error!(
-                                    "[ContainerdNri] Failed to register after {} attempts: {}. Will retry in background.",
+                                    "[ContainerdNri] Failed to register after {} attempts: {}. \
+                                     Switching to background retry mode (every 30s).",
                                     attempts, e
                                 );
-                                // 继续重试，但不阻塞服务启动
-                                tokio::spawn(async move {
-                                    sleep(Duration::from_secs(30)).await;
-                                });
-                                break;
+                                in_background_retry = true;
+                                Duration::from_secs(30)
+                            } else {
+                                warn!(
+                                    "[ContainerdNri] Background registration attempt failed: {}. \
+                                     Retrying in 30s...",
+                                    e
+                                );
+                                Duration::from_secs(30)
+                            };
+
+                            if !in_background_retry {
+                                warn!(
+                                    "[ContainerdNri] Registration attempt {} failed: {}. Retrying in {:?}...",
+                                    attempts, e, delay
+                                );
                             }
-
-                            let delay = std::cmp::min(
-                                retry_config.initial_delay.mul_f64(
-                                    retry_config.backoff_multiplier.powi(attempts as i32 - 1)
-                                ),
-                                retry_config.max_delay,
-                            );
-
-                            warn!(
-                                "[ContainerdNri] Registration attempt {} failed: {}. Retrying in {:?}...",
-                                attempts, e, delay
-                            );
 
                             sleep(delay).await;
                         }
@@ -576,15 +605,107 @@ impl ContainerdNriPlugin {
     }
 
     /// 向 containerd 运行时注册插件
-    #[instrument(skip(runtime_socket, _plugin_socket, plugin_name, plugin_idx))]
+    ///
+    /// 使用 tonic 通过 Unix Socket 连接 containerd NRI Runtime，
+    /// 调用 RegisterPlugin RPC 将自己注册为 NRI 插件。
+    #[instrument(skip(runtime_socket, plugin_socket, plugin_name, plugin_idx))]
     async fn register_with_runtime(
         runtime_socket: &str,
-        _plugin_socket: &str,
+        plugin_socket: &str,
         plugin_name: &str,
         plugin_idx: &str,
     ) -> Result<(), ContainerdNriError> {
         debug!(
-            "[ContainerdNri] Connecting to runtime at {} for plugin {}.{}",
+            "[ContainerdNri] Connecting to runtime at {} for plugin {}.{} (socket={})",
+            runtime_socket, plugin_name, plugin_idx, plugin_socket
+        );
+
+        // 检查运行时 socket 是否存在
+        if !Path::new(runtime_socket).exists() {
+            return Err(ContainerdNriError::ConnectionError(
+                format!("Runtime socket does not exist: {}", runtime_socket)
+            ));
+        }
+
+        // 检查插件 socket 是否存在（containerd 需要连回来）
+        if !Path::new(plugin_socket).exists() {
+            warn!(
+                "[ContainerdNri] Plugin socket {} does not exist yet. \
+                 The plugin gRPC server should be started before registration.",
+                plugin_socket
+            );
+        }
+
+        // 构造 Unix Socket URI (tonic 格式: unix://path)
+        let runtime_uri = format!("unix://{}", runtime_socket);
+
+        // 连接 containerd NRI Runtime
+        let channel = tonic::transport::Endpoint::from_shared(runtime_uri.clone())
+            .map_err(|e| ContainerdNriError::ConnectionError(
+                format!("Failed to create endpoint for {}: {}", runtime_uri, e)
+            ))?
+            .connect()
+            .await
+            .map_err(|e| ContainerdNriError::ConnectionError(
+                format!("Failed to connect to runtime at {}: {}", runtime_uri, e)
+            ))?;
+
+        let mut runtime_client = RuntimeClient::new(channel);
+
+        // 构造注册请求
+        let request = RegisterPluginRequest {
+            plugin_name: plugin_name.to_string(),
+            plugin_idx: plugin_idx.to_string(),
+            capabilities: vec![
+                nri_proto::EventCapability::RuntimeEvents as i32,
+                nri_proto::EventCapability::PodEvents as i32,
+                nri_proto::EventCapability::ContainerEvents as i32,
+            ],
+        };
+
+        debug!(
+            "[ContainerdNri] Sending RegisterPlugin request: name={}, idx={}, capabilities={:?}",
+            request.plugin_name, request.plugin_idx, request.capabilities
+        );
+
+        // 发送注册请求
+        let response = runtime_client
+            .register_plugin(request)
+            .await
+            .map_err(|e| ContainerdNriError::RegistrationError(
+                format!("RegisterPlugin RPC failed: {}", e)
+            ))?;
+
+        let resp = response.into_inner();
+
+        if resp.success {
+            info!(
+                "[ContainerdNri] Successfully registered plugin {}.{} with runtime",
+                plugin_name, plugin_idx
+            );
+            Ok(())
+        } else {
+            Err(ContainerdNriError::RegistrationError(
+                format!(
+                    "Runtime rejected plugin registration: {}",
+                    if resp.error_message.is_empty() { "unknown error".to_string() } else { resp.error_message }
+                )
+            ))
+        }
+    }
+
+    /// 从 containerd 运行时注销插件
+    ///
+    /// 使用 tonic 通过 Unix Socket 连接 containerd NRI Runtime，
+    /// 调用 UnregisterPlugin RPC 将自己从 NRI 插件列表中移除。
+    #[instrument(skip(runtime_socket, plugin_name, plugin_idx))]
+    pub async fn unregister_from_runtime(
+        runtime_socket: &str,
+        plugin_name: &str,
+        plugin_idx: &str,
+    ) -> Result<(), ContainerdNriError> {
+        debug!(
+            "[ContainerdNri] Connecting to runtime at {} to unregister plugin {}.{}",
             runtime_socket, plugin_name, plugin_idx
         );
 
@@ -595,56 +716,55 @@ impl ContainerdNriPlugin {
             ));
         }
 
-        // 使用 tonic 连接 Unix Socket
-        let channel = tonic::transport::Endpoint::try_from(format!("unix:{}", runtime_socket))
-            .map_err(|e| {
-                error!("[ContainerdNri] Invalid socket path '{}': {}", runtime_socket, e);
-                ContainerdNriError::ConnectionError(format!("Invalid socket path: {}", e))
-            })?
+        // 构造 Unix Socket URI (tonic 格式: unix://path)
+        let runtime_uri = format!("unix://{}", runtime_socket);
+
+        // 连接 containerd NRI Runtime
+        let channel = tonic::transport::Endpoint::from_shared(runtime_uri.clone())
+            .map_err(|e| ContainerdNriError::ConnectionError(
+                format!("Failed to create endpoint for {}: {}", runtime_uri, e)
+            ))?
             .connect()
             .await
-            .map_err(|e| {
-                error!("[ContainerdNri] Failed to connect to runtime '{}': {}", runtime_socket, e);
-                ContainerdNriError::ConnectionError(format!("Failed to connect: {}", e))
-            })?;
+            .map_err(|e| ContainerdNriError::ConnectionError(
+                format!("Failed to connect to runtime at {}: {}", runtime_uri, e)
+            ))?;
 
-        debug!("[ContainerdNri] Connected to runtime, creating client");
-        let mut client = RuntimeClient::new(channel);
+        let mut runtime_client = RuntimeClient::new(channel);
 
-        let request = tonic::Request::new(RegisterPluginRequest {
+        // 构造注销请求
+        let request = UnregisterPluginRequest {
             plugin_name: plugin_name.to_string(),
             plugin_idx: plugin_idx.to_string(),
-            capabilities: vec![
-                nri_proto::EventCapability::PodEvents as i32,
-                nri_proto::EventCapability::ContainerEvents as i32,
-            ],
-        });
+        };
 
-        debug!("[ContainerdNri] Sending registration request");
-        let response = client.register_plugin(request).await.map_err(|e| {
-            error!("[ContainerdNri] Registration RPC failed: {}", e);
-            ContainerdNriError::RegistrationError(format!("Registration RPC failed: {}", e))
-        })?;
+        debug!(
+            "[ContainerdNri] Sending UnregisterPlugin request: name={}, idx={}",
+            request.plugin_name, request.plugin_idx
+        );
+
+        // 发送注销请求
+        let response = runtime_client
+            .unregister_plugin(request)
+            .await
+            .map_err(|e| ContainerdNriError::RegistrationError(
+                format!("UnregisterPlugin RPC failed: {}", e)
+            ))?;
 
         let resp = response.into_inner();
+
         if resp.success {
             info!(
-                "[ContainerdNri] Successfully registered with runtime: plugin_name={}, idx={}, response={}",
-                plugin_name,
-                plugin_idx,
-                &resp.error_message
+                "[ContainerdNri] Successfully unregistered plugin {}.{} from runtime",
+                plugin_name, plugin_idx
             );
             Ok(())
         } else {
-            let error_msg = resp.error_message.clone();
-            error!(
-                "[ContainerdNri] Runtime rejected registration: plugin_name={}, idx={}, error={}",
-                plugin_name,
-                plugin_idx,
-                error_msg
-            );
             Err(ContainerdNriError::RegistrationError(
-                format!("Runtime rejected: {}", error_msg)
+                format!(
+                    "Runtime rejected plugin unregistration: {}",
+                    if resp.error_message.is_empty() { "unknown error".to_string() } else { resp.error_message }
+                )
             ))
         }
     }
@@ -653,6 +773,24 @@ impl ContainerdNriPlugin {
     #[allow(dead_code)]
 fn convert_pod(&self, pod: &nri_proto::PodSandbox) -> NriPodEvent {
         let containers = vec![]; // 会在后续事件中填充
+
+        // 提取额外的CRI兼容信息
+        let runtime_handler = pod.runtime_handler.clone();
+        let ips = pod.ips.clone();
+        
+        // 提取namespace信息
+        let namespaces = pod.linux.as_ref()
+            .map(|linux| {
+                linux.namespaces.iter()
+                    .map(|ns| format!("{}:{}", ns.r#type, ns.path))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        debug!(
+            "[ContainerdNri] Converting pod: runtime_handler={}, ips={:?}, namespaces={:?}",
+            runtime_handler, ips, namespaces
+        );
 
         NriPodEvent {
             pod_uid: pod.pod_uid.clone(),
@@ -671,6 +809,25 @@ fn convert_pod(&self, pod: &nri_proto::PodSandbox) -> NriPodEvent {
         let pids = container.linux.as_ref()
             .map(|linux| linux.pids.iter().map(|&pid| pid as u32).collect())
             .unwrap_or_default();
+
+        // 提取namespace信息
+        let namespaces = container.linux.as_ref()
+            .map(|linux| {
+                linux.namespaces.iter()
+                    .map(|ns| format!("{}:{}", ns.r#type, ns.path))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        // 提取cgroup路径
+        let cgroup_path = container.linux.as_ref()
+            .map(|linux| linux.cgroup_path.clone())
+            .unwrap_or_default();
+
+        debug!(
+            "[ContainerdNri] Converting container: id={}, cgroup_path={}, namespaces={:?}",
+            container.container_id, cgroup_path, namespaces
+        );
 
         NriContainerInfo {
             container_id: container.container_id.clone(),
@@ -716,15 +873,21 @@ impl Plugin for ContainerdNriPlugin {
         let mut configured = self.configured.write().await;
         *configured = true;
 
-        // 返回支持的配置
+        // 返回支持的配置，包括Pod生命周期事件
         let response = ConfigureResponse {
             success: true,
             error: "".to_string(),
             events: vec![
+                nri_proto::EventCapability::RuntimeEvents as i32,
                 nri_proto::EventCapability::PodEvents as i32,
                 nri_proto::EventCapability::ContainerEvents as i32,
             ],
         };
+
+        debug!(
+            "[ContainerdNri] Plugin configured with event capabilities: {:?}",
+            response.events
+        );
 
         Ok(Response::new(response))
     }
@@ -828,13 +991,13 @@ impl Plugin for ContainerdNriPlugin {
         match self.event_tx.try_send(event) {
             Ok(_) => {
                 self.circuit_breaker.record_success().await;
-                self.metrics.record_event(true);
+                self.metrics.record_containerd_event(true);
                 debug!("[ContainerdNri] CreateContainer event sent successfully");
             }
             Err(e) => {
                 warn!("[ContainerdNri] Failed to send create event: {}", e);
                 self.circuit_breaker.record_failure().await;
-                self.metrics.record_event(false);
+                self.metrics.record_containerd_event(false);
             }
         }
 
@@ -882,12 +1045,12 @@ impl Plugin for ContainerdNriPlugin {
         match self.event_tx.try_send(event) {
             Ok(_) => {
                 self.circuit_breaker.record_success().await;
-                self.metrics.record_event(true);
+                self.metrics.record_containerd_event(true);
             }
             Err(e) => {
                 warn!("[ContainerdNri] Failed to send update event: {}", e);
                 self.circuit_breaker.record_failure().await;
-                self.metrics.record_event(false);
+                self.metrics.record_containerd_event(false);
             }
         }
 
@@ -928,17 +1091,20 @@ impl Plugin for ContainerdNriPlugin {
             container.container_id
         );
 
-        // 发送 DELETE 事件
-        let event = NriEvent::Delete { pod_uid: pod.pod_uid.clone() };
+        // 发送 RemoveContainer 事件（仅移除该容器，保留 Pod 的其他容器）
+        let event = NriEvent::RemoveContainer {
+            pod_uid: pod.pod_uid.clone(),
+            container_id: container.container_id.clone(),
+        };
         match self.event_tx.try_send(event) {
             Ok(_) => {
                 self.circuit_breaker.record_success().await;
-                self.metrics.record_event(true);
+                self.metrics.record_containerd_event(true);
             }
             Err(e) => {
                 warn!("[ContainerdNri] Failed to send stop event: {}", e);
                 self.circuit_breaker.record_failure().await;
-                self.metrics.record_event(false);
+                self.metrics.record_containerd_event(false);
             }
         }
 
@@ -970,5 +1136,110 @@ pub enum ContainerdNriError {
 impl From<ContainerdNriError> for NutsError {
     fn from(e: ContainerdNriError) -> Self {
         NutsError::internal(&format!("Containerd NRI error: {}", e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use tempfile::TempDir;
+    use tokio::net::UnixListener;
+
+    #[tokio::test]
+    async fn test_register_with_runtime_socket_not_exists() {
+        let runtime_socket = "/nonexistent/runtime.sock";
+        let plugin_socket = "/tmp/test-plugin.sock";
+        let plugin_name = "test-plugin";
+        let plugin_idx = "001";
+
+        let result = ContainerdNriPlugin::register_with_runtime(
+            runtime_socket,
+            plugin_socket,
+            plugin_name,
+            plugin_idx,
+        ).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ContainerdNriError::ConnectionError(msg) => {
+                assert!(msg.contains("Runtime socket does not exist"));
+            }
+            _ => panic!("Expected ConnectionError for nonexistent socket"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_register_with_runtime_plugin_socket_not_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        let runtime_socket = temp_dir.path().join("runtime.sock");
+        
+        // 创建运行时socket文件
+        UnixListener::bind(&runtime_socket).unwrap();
+        
+        let plugin_socket = "/nonexistent/plugin.sock";
+        let plugin_name = "test-plugin";
+        let plugin_idx = "001";
+
+        let result = ContainerdNriPlugin::register_with_runtime(
+            runtime_socket.to_str().unwrap(),
+            plugin_socket,
+            plugin_name,
+            plugin_idx,
+        ).await;
+
+        // 应该成功，因为插件socket不存在只是警告
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_register_with_runtime_invalid_runtime_socket() {
+        let runtime_socket = "/invalid/runtime.sock";
+        let plugin_socket = "/tmp/test-plugin.sock";
+        let plugin_name = "test-plugin";
+        let plugin_idx = "001";
+
+        let result = ContainerdNriPlugin::register_with_runtime(
+            runtime_socket,
+            plugin_socket,
+            plugin_name,
+            plugin_idx,
+        ).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ContainerdNriError::ConnectionError(_) | ContainerdNriError::GrpcError(_) => {
+                // 预期连接错误或gRPC错误
+            }
+            _ => panic!("Expected ConnectionError or GrpcError for invalid socket"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_register_with_runtime_success_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let runtime_socket = temp_dir.path().join("runtime.sock");
+        let plugin_socket = temp_dir.path().join("plugin.sock");
+        let plugin_name = "test-plugin";
+        let plugin_idx = "001";
+
+        // 模拟运行时socket存在
+        UnixListener::bind(&runtime_socket).unwrap();
+
+        let result = ContainerdNriPlugin::register_with_runtime(
+            runtime_socket.to_str().unwrap(),
+            plugin_socket.to_str().unwrap(),
+            plugin_name,
+            plugin_idx,
+        ).await;
+
+        // 由于没有真实的containerd运行时，预期连接失败，但应该能到达连接阶段
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ContainerdNriError::ConnectionError(_) | ContainerdNriError::GrpcError(_) => {
+                // 预期连接错误，这是正常的
+            }
+            _ => panic!("Expected ConnectionError or GrpcError"),
+        }
     }
 }

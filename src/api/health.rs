@@ -7,20 +7,21 @@ use serde::Serialize;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use crate::collector::nri_mapping::NriMappingTable;
+use crate::collector::nri_mapping_v2::NriMappingTableV2;
 
 /// 应用状态（共享）
+#[derive(Clone)]
 pub struct AppState {
     /// 启动时间
     pub start_time: SystemTime,
     /// NRI 映射表
-    pub nri_table: Arc<NriMappingTable>,
+    pub nri_table: Arc<NriMappingTableV2>,
     /// 版本信息
     pub version: String,
 }
 
 impl AppState {
-    pub fn new(nri_table: Arc<NriMappingTable>) -> Self {
+    pub fn new(nri_table: Arc<NriMappingTableV2>) -> Self {
         Self {
             start_time: SystemTime::now(),
             nri_table,
@@ -177,7 +178,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn create_test_state() -> Arc<AppState> {
-        Arc::new(AppState::new(Arc::new(NriMappingTable::new())))
+        Arc::new(AppState::new(Arc::new(NriMappingTableV2::new())))
     }
 
     #[tokio::test]

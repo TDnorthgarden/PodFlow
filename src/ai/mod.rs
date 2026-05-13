@@ -43,7 +43,7 @@ pub struct AiAdapterConfig {
 impl Default for AiAdapterConfig {
     fn default() -> Self {
         Self {
-            endpoint: "http://localhost:8000/v1/chat/completions".to_string(),
+            endpoint: "http://localhost:8080/v1/chat/completions".to_string(),
             api_key: None,
             timeout_secs: 60,
             max_retries: 2,

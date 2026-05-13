@@ -6,7 +6,8 @@ use axum::{extract::{Json, Path, Query, State}, routing::{get, post}, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::collector::nri_mapping::{NriMappingTable, NriEvent, NriPodEvent, NriContainerInfo};
+use crate::collector::nri_mapping_v2::{NriEvent, NriPodEvent, NriContainerInfo};
+use crate::collector::nri_v3::NriV3;
 
 /// NRI Pod 事件请求体
 #[derive(Debug, Deserialize)]
@@ -37,17 +38,23 @@ pub struct NriPodEventRequest {
 pub struct NriContainerRequest {
     /// 容器 ID
     pub container_id: String,
-    /// 容器名称
+    /// 容器名称（支持 container_name 和 name 两种格式）
     #[serde(default)]
     pub container_name: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
     /// cgroup ID 列表
+    #[serde(default)]
     pub cgroup_ids: Vec<String>,
     /// 进程 ID 列表（可选）
     #[serde(default)]
-    pub pids: Vec<u32>,
+    pub pids: Option<Vec<u32>>,
     /// 运行时类型（如：runc, crun）
     #[serde(default)]
     pub runtime: Option<String>,
+    /// 容器状态（nuts-adapter 发送的字段）
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 /// NRI 事件响应
@@ -71,20 +78,20 @@ pub struct NriStats {
 }
 
 /// 创建 NRI Webhook 路由
-/// 
-/// 需要传入共享的 NriMappingTable
-pub fn router(nri_table: Arc<NriMappingTable>) -> Router {
+///
+/// 需要传入共享的 NriV3 实例（包含批量处理器）
+pub fn router(nri_v3: Arc<NriV3>) -> Router {
     Router::new()
         .route("/v1/nri/events", post(nri_event_handler))
         .route("/v1/nri/pods", get(list_pods_handler))
         .route("/v1/nri/pods/search", get(search_pods_handler))
         .route("/v1/nri/pods/:pod_uid", get(get_pod_handler))
-        .with_state(nri_table)
+        .with_state(nri_v3)
 }
 
 /// NRI 事件处理器
 async fn nri_event_handler(
-    axum::extract::State(nri_table): axum::extract::State<Arc<NriMappingTable>>,
+    axum::extract::State(nri_v3): axum::extract::State<Arc<NriV3>>,
     Json(req): Json<NriPodEventRequest>,
 ) -> Json<NriEventResponse> {
     tracing::info!(
@@ -98,7 +105,7 @@ async fn nri_event_handler(
         .map(|c| NriContainerInfo {
             container_id: c.container_id,
             cgroup_ids: c.cgroup_ids,
-            pids: c.pids,
+            pids: c.pids.unwrap_or_default(),
         })
         .collect();
 
@@ -123,14 +130,15 @@ async fn nri_event_handler(
         }
     };
 
-    // 更新映射表
-    match nri_table.update_from_nri(event) {
+    // 通过V3批量处理器提交事件
+    match nri_v3.submit_event(event).await {
         Ok(()) => {
+            let table = nri_v3.table();
             let stats = NriStats {
-                pod_count: nri_table.pod_count(),
-                container_count: nri_table.container_count(),
-                cgroup_count: nri_table.cgroup_count(),
-                pid_count: nri_table.pid_count(),
+                pod_count: table.pod_count(),
+                container_count: table.container_count(),
+                cgroup_count: table.cgroup_count(),
+                pid_count: table.pid_count(),
             };
 
             tracing::info!(
@@ -146,10 +154,10 @@ async fn nri_event_handler(
         }
         Err(e) => {
             tracing::error!("Failed to process NRI event: {:?}", e);
-            
+
             Json(NriEventResponse {
                 status: "error".to_string(),
-                message: format!("Failed to update mapping table: {:?}", e),
+                message: format!("Failed to submit event to batch processor: {:?}", e),
                 stats: None,
             })
         }
@@ -160,13 +168,14 @@ async fn nri_event_handler(
 /// 
 /// 用于健康检查和调试
 pub async fn get_mapping_stats(
-    axum::extract::State(nri_table): axum::extract::State<Arc<NriMappingTable>>,
+    axum::extract::State(nri_v3): axum::extract::State<Arc<NriV3>>,
 ) -> Json<NriStats> {
+    let table = nri_v3.table();
     Json(NriStats {
-        pod_count: nri_table.pod_count(),
-        container_count: nri_table.container_count(),
-        cgroup_count: nri_table.cgroup_count(),
-        pid_count: nri_table.pid_count(),
+        pod_count: table.pod_count(),
+        container_count: table.container_count(),
+        cgroup_count: table.cgroup_count(),
+        pid_count: table.pid_count(),
     })
 }
 
@@ -215,9 +224,10 @@ pub struct PodSearchQuery {
 
 /// 列出所有Pod
 async fn list_pods_handler(
-    State(nri_table): State<Arc<NriMappingTable>>,
+    State(nri_v3): State<Arc<NriV3>>,
 ) -> Json<PodListResponse> {
-    let pods = nri_table.list_all_pods();
+    let table = nri_v3.table();
+    let pods = table.list_all_pods();
     let summaries: Vec<PodSummary> = pods
         .into_iter()
         .map(|pod| PodSummary {
@@ -227,7 +237,7 @@ async fn list_pods_handler(
             container_count: pod.containers.len(),
         })
         .collect();
-    
+
     Json(PodListResponse {
         total: summaries.len(),
         pods: summaries,
@@ -236,22 +246,23 @@ async fn list_pods_handler(
 
 /// 搜索Pod（支持模糊匹配）
 async fn search_pods_handler(
-    State(nri_table): State<Arc<NriMappingTable>>,
+    State(nri_v3): State<Arc<NriV3>>,
     Query(query): Query<PodSearchQuery>,
 ) -> Json<PodListResponse> {
+    let table = nri_v3.table();
     let pods = if let Some(name) = &query.name {
         // 精确匹配模式
-        if let Some(pod) = nri_table.find_pod_by_name_namespace(name, query.namespace.as_deref().unwrap_or("default")) {
+        if let Some(pod) = table.find_pod_by_name_namespace(name, query.namespace.as_deref().unwrap_or("default")) {
             vec![pod]
         } else {
             vec![]
         }
     } else if let Some(prefix) = &query.name_prefix {
         // 前缀模糊匹配模式
-        nri_table.find_pods_by_name(prefix)
+        table.find_pods_by_name(prefix)
     } else {
         // 命名空间过滤模式
-        nri_table.list_all_pods()
+        table.list_all_pods()
             .into_iter()
             .filter(|pod| {
                 if let Some(ns) = &query.namespace {
@@ -262,7 +273,7 @@ async fn search_pods_handler(
             })
             .collect()
     };
-    
+
     let summaries: Vec<PodSummary> = pods
         .into_iter()
         .map(|pod| PodSummary {
@@ -272,7 +283,7 @@ async fn search_pods_handler(
             container_count: pod.containers.len(),
         })
         .collect();
-    
+
     Json(PodListResponse {
         total: summaries.len(),
         pods: summaries,
@@ -281,13 +292,14 @@ async fn search_pods_handler(
 
 /// 获取Pod详细信息
 async fn get_pod_handler(
-    State(nri_table): State<Arc<NriMappingTable>>,
+    State(nri_v3): State<Arc<NriV3>>,
     Path(pod_uid): Path<String>,
 ) -> Result<Json<PodDetailResponse>, axum::http::StatusCode> {
-    let (pod, containers) = nri_table
+    let table = nri_v3.table();
+    let (pod, containers) = table
         .get_pod_details(&pod_uid)
         .ok_or(axum::http::StatusCode::NOT_FOUND)?;
-    
+
     let container_details: Vec<ContainerDetail> = containers
         .into_iter()
         .map(|c| ContainerDetail {
@@ -295,7 +307,7 @@ async fn get_pod_handler(
             cgroup_ids: c.cgroup_ids,
         })
         .collect();
-    
+
     Ok(Json(PodDetailResponse {
         pod_uid: pod.pod_uid,
         pod_name: pod.pod_name,
@@ -307,10 +319,11 @@ async fn get_pod_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collector::nri_mapping_v2::NriMappingTableV2;
 
     #[test]
     fn test_nri_event_conversion() {
-        let nri_table = Arc::new(NriMappingTable::new());
+        let nri_table = Arc::new(NriMappingTableV2::new());
         
         // 模拟 ADD 事件
         let event = NriPodEvent {

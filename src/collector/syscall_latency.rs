@@ -1,7 +1,8 @@
 use crate::types::error::NutsError;
 use crate::types::evidence::*;
 use crate::types::evidence::{TopCalls, TopCall};
-use crate::collector::nri_mapping::{AttributionSource, NriMappingTable};
+use crate::collector::nri_mapping_v2::NriMappingTableV2;
+use crate::collector::nri_mapping_v2::AttributionSource;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -20,7 +21,7 @@ pub struct SyscallCollectorConfig {
     pub requested_metrics: Vec<String>,
     pub requested_events: Vec<String>,
     /// NRI 映射表引用，用于查询归属
-    pub nri_table: Option<Arc<NriMappingTable>>,
+    pub nri_table: Option<Arc<NriMappingTableV2>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -2,11 +2,47 @@
 //!
 //! 提供命令行接口与 nuts-observer 服务交互
 
-use crate::types::error::NutsError;
 use clap::{Parser, Subcommand};
 use reqwest;
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use atty;
+use std::sync::Arc;
+
+// Import real-time watch mode
+use crate::collector::watch_mode::{WatchConfig, start_real_time_watch};
+use crate::collector::nri_v3::{NriV3, NriV3Config, create_nri_v3};
+use crate::collector::completion::generate_completion_script;
+
+/// Global flag controlling ANSI color output
+static COLOR_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Set whether color output is enabled
+pub fn set_color_enabled(enabled: bool) {
+    COLOR_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// Set whether color output is disabled
+fn set_color_disabled() {
+    COLOR_ENABLED.store(false, Ordering::Relaxed);
+}
+
+/// Check if color output is enabled
+pub fn is_color_enabled() -> bool {
+    COLOR_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Check if output is a TTY and enable colors if appropriate
+fn setup_colors_based_on_tty() {
+    use std::io::IsTerminal;
+    
+    if std::io::stdout().is_terminal() {
+        set_color_enabled(true);
+    } else {
+        set_color_enabled(false);
+    }
+}
 
 /// Nuts Observer CLI
 #[derive(Parser)]
@@ -14,11 +50,15 @@ use std::time::Duration;
 #[command(about = "容器智能故障分析插件 CLI")]
 #[command(version = "0.1.0")]
 pub struct Cli {
-    /// 服务地址
+    /// Server address
     #[arg(short, long, default_value = "http://localhost:8080")]
     pub server: String,
 
-    /// 子命令
+    /// Disable colored output
+    #[arg(long, env = "NO_COLOR")]
+    pub no_color: bool,
+
+    /// Subcommand
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -154,6 +194,7 @@ pub enum Commands {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum OutputFormat {
     Json,
+    Yaml,
     Pretty,
     Summary,
 }
@@ -289,13 +330,31 @@ pub enum CaseCommands {
     },
     /// 查看案例库统计
     Stats,
+
+    /// 生成Shell自动补全脚本
+    Completion {
+        /// Shell类型 (bash, zsh, fish)
+        #[arg(short, long, default_value = "bash")]
+        shell: String,
+    },
 }
 
 /// 执行 CLI 命令
 pub async fn run(cli: Cli) -> Result<(), CliError> {
+    // 设置颜色输出基于TTY和--no-color标志
+    if cli.no_color {
+        set_color_disabled();
+    } else {
+        setup_colors_based_on_tty();
+    }
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
         .build()?;
+
+    // Set color mode: disable if --no-color or not a TTY
+    let use_color = !cli.no_color && atty::is(atty::Stream::Stdout);
+    set_color_enabled(use_color);
 
     match cli.command {
         Commands::Trigger {
@@ -449,27 +508,20 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             pod_uid,
             namespace,
             pod_name,
-            evidence_types,
-            metrics,
-            window_secs,
+            evidence_types: _,
+            metrics: _,
+            window_secs: _,
             interval,
             count,
             detailed,
         } => {
-            run_watch_mode(
-                &cli.server,
-                &client,
+            run_real_time_watch_mode(
                 &pod_uid,
                 &namespace,
-                pod_name.as_deref(),
-                &evidence_types,
-                metrics.as_ref(),
-                window_secs,
                 interval,
                 count,
                 detailed,
-            )
-            .await?;
+            ).await?
         }
 
         Commands::ListPods {
@@ -483,11 +535,11 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         }
 
         Commands::Config { subcommand } => {
-            handle_config_command(&cli.server, &client, subcommand).await?;
+            handle_config_command(&cli.server, &client, subcommand).await?
         }
-        
+
         Commands::Case { subcommand } => {
-            handle_case_command(subcommand).await?;
+            handle_case_command(subcommand).await?
         }
 
     }
@@ -534,6 +586,12 @@ fn print_trigger_result(result: &serde_json::Value, format: OutputFormat) {
                     result.get("status").and_then(|s| s.as_str()).unwrap_or("unknown"),
                     result.get("evidence_count").and_then(|e| e.as_u64()).unwrap_or(0)
                 );
+            }
+        }
+        OutputFormat::Yaml => {
+            match serde_yaml::to_string(result) {
+                Ok(yaml) => println!("{}", yaml),
+                Err(e) => eprintln!("Failed to serialize result to YAML: {}", e),
             }
         }
     }
@@ -642,6 +700,34 @@ mod ansi {
     // 数值格式化辅助函数
     pub fn cyan_f64(v: f64) -> String { format!("\x1B[36m{:.2}\x1B[0m", v) }
     pub fn cyan_i64(v: i64) -> String { format!("\x1B[36m{}\x1B[0m", v) }
+}
+
+/// 运行实时 Watch 模式（使用真实容器数据）
+async fn run_real_time_watch_mode(
+    pod_uid: &str,
+    namespace: &str,
+    interval: u64,
+    count: u32,
+    detailed: bool,
+) -> Result<(), CliError> {
+    // Create NRI V3 instance for real-time data access
+    let nri_v3 = create_nri_v3().await
+        .map_err(|e| CliError::InternalError(format!("Failed to initialize NRI V3: {}", e)))?;
+
+    let nri_v3 = Arc::new(nri_v3);
+
+    // Configure watch mode
+    let watch_config = WatchConfig {
+        pod_uid: Some(pod_uid.to_string()),
+        namespace: Some(namespace.to_string()),
+        interval_secs: interval,
+        max_iterations: if count > 0 { Some(count) } else { None },
+        detailed,
+    };
+
+    // Start real-time monitoring
+    start_real_time_watch(nri_v3, watch_config).await
+        .map_err(|e| CliError::InternalError(format!("Watch mode failed: {}", e)))
 }
 
 /// 运行 Watch 模式（使用 ANSI 颜色 + 进度条）
@@ -1284,19 +1370,23 @@ pub enum CliError {
     JsonError(serde_json::Error),
     InvalidInput(String),
     IoError(String),
+    NetworkError(String),
+    InternalError(String),
 }
 
 impl std::fmt::Display for CliError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CliError::RequestError(e) => write!(f, "请求错误: {}", e),
+            CliError::RequestError(e) => write!(f, "Request error: {}", e),
             CliError::ApiError { status, message } => {
-                write!(f, "API 错误 [{}]: {}", status, message)
+                write!(f, "API error [{}]: {}", status, message)
             }
-            CliError::ConnectionError(msg) => write!(f, "连接错误: {}", msg),
-            CliError::JsonError(e) => write!(f, "JSON 解析错误: {}", e),
-            CliError::InvalidInput(msg) => write!(f, "输入错误: {}", msg),
-            CliError::IoError(msg) => write!(f, "IO错误: {}", msg),
+            CliError::ConnectionError(msg) => write!(f, "Connection error: {}", msg),
+            CliError::JsonError(e) => write!(f, "JSON parse error: {}", e),
+            CliError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
+            CliError::IoError(msg) => write!(f, "IO error: {}", msg),
+            CliError::NetworkError(msg) => write!(f, "Network error: {}", msg),
+            CliError::InternalError(msg) => write!(f, "Internal error: {}", msg),
         }
     }
 }
@@ -1344,7 +1434,7 @@ async fn resolve_pod_by_name(
     if !response.status().is_success() {
         return Err(CliError::ApiError {
             status: response.status().to_string(),
-            message: "查询Pod失败".to_string(),
+            message: "Failed to query pod".to_string(),
         });
     }
     
@@ -1363,7 +1453,7 @@ async fn resolve_pod_by_name(
             .and_then(|u| u.as_str())
             .ok_or_else(|| CliError::ApiError {
                 status: "INVALID_RESPONSE".to_string(),
-                message: "API响应缺少pod_uid".to_string(),
+                message: "API response missing pod_uid".to_string(),
             })?;
         return Ok(uid.to_string());
     }
@@ -1399,7 +1489,7 @@ async fn list_pods(
     if !response.status().is_success() {
         return Err(CliError::ApiError {
             status: response.status().to_string(),
-            message: "列出Pod失败".to_string(),
+            message: "Failed to list pods".to_string(),
         });
     }
     
@@ -1435,7 +1525,7 @@ async fn handle_config_command(
             if !response.status().is_success() {
                 return Err(CliError::ApiError {
                     status: response.status().to_string(),
-                    message: "获取规则列表失败".to_string(),
+                    message: "Failed to get rule list".to_string(),
                 });
             }
             
@@ -1456,7 +1546,7 @@ async fn handle_config_command(
                         let json_filtered: Vec<_> = filtered.iter().map(|&r| r.clone()).collect();
                         println!("{}", match serde_json::to_string_pretty(&json_filtered) {
                 Ok(json) => json,
-                Err(e) => return Err(NutsError::Json(e)),
+                Err(e) => return Err(CliError::JsonError(e)),
             });
                     }
                     ListOutputFormat::Simple => {
@@ -1518,7 +1608,7 @@ async fn handle_config_command(
             if !response.status().is_success() {
                 return Err(CliError::ApiError {
                     status: response.status().to_string(),
-                    message: "获取规则失败".to_string(),
+                    message: "Failed to get rule".to_string(),
                 });
             }
             
@@ -1526,7 +1616,7 @@ async fn handle_config_command(
             if let Some(rule) = result.get("data") {
                 println!("{}", match serde_json::to_string_pretty(rule) {
                 Ok(json) => json,
-                Err(e) => return Err(NutsError::Json(e)),
+                Err(e) => return Err(CliError::JsonError(e)),
             });
             }
         }
@@ -1560,7 +1650,7 @@ async fn handle_config_command(
             if !response.status().is_success() {
                 return Err(CliError::ApiError {
                     status: response.status().to_string(),
-                    message: "创建规则失败".to_string(),
+                    message: "Failed to create rule".to_string(),
                 });
             }
             
@@ -1592,7 +1682,7 @@ async fn handle_config_command(
             if !response.status().is_success() {
                 return Err(CliError::ApiError {
                     status: response.status().to_string(),
-                    message: "更新规则失败".to_string(),
+                    message: "Failed to update rule".to_string(),
                 });
             }
             
@@ -1611,7 +1701,7 @@ async fn handle_config_command(
             if !response.status().is_success() {
                 return Err(CliError::ApiError {
                     status: response.status().to_string(),
-                    message: "删除规则失败".to_string(),
+                    message: "Failed to delete rule".to_string(),
                 });
             }
             
@@ -1625,7 +1715,7 @@ async fn handle_config_command(
             if !response.status().is_success() {
                 return Err(CliError::ApiError {
                     status: response.status().to_string(),
-                    message: "重新加载默认规则失败".to_string(),
+                    message: "Failed to reload default rules".to_string(),
                 });
             }
             
@@ -1639,7 +1729,7 @@ async fn handle_config_command(
             if !response.status().is_success() {
                 return Err(CliError::ApiError {
                     status: response.status().to_string(),
-                    message: "清空规则失败".to_string(),
+                    message: "Failed to clear rules".to_string(),
                 });
             }
             
@@ -1658,7 +1748,7 @@ async fn handle_config_command(
             if !response.status().is_success() {
                 return Err(CliError::ApiError {
                     status: response.status().to_string(),
-                    message: "导入规则失败".to_string(),
+                    message: "Failed to import rules".to_string(),
                 });
             }
             
@@ -1675,14 +1765,14 @@ async fn handle_config_command(
         ConfigCommands::Export { file } => {
             let url = format!("{}/v1/rules/export", server);
             let response = client.get(&url).send().await?;
-            
+
             if !response.status().is_success() {
                 return Err(CliError::ApiError {
                     status: response.status().to_string(),
-                    message: "导出规则失败".to_string(),
+                    message: "Failed to export rules".to_string(),
                 });
             }
-            
+
             let result: serde_json::Value = response.json().await?;
             if let Some(yaml) = result.get("data").and_then(|d| d.get("yaml_content")).and_then(|y| y.as_str()) {
                 tokio::fs::write(&file, yaml).await
@@ -1690,39 +1780,65 @@ async fn handle_config_command(
                 println!("✅ 规则已导出到: {}", file);
             }
         }
-        
+
         ConfigCommands::Status => {
             let url = format!("{}/v1/rules/status", server);
             let response = client.get(&url).send().await?;
-            
+
             if !response.status().is_success() {
                 return Err(CliError::ApiError {
                     status: response.status().to_string(),
-                    message: "获取状态失败".to_string(),
+                    message: "Failed to get status".to_string(),
                 });
             }
-            
+
             let result: serde_json::Value = response.json().await?;
             if let Some(status) = result.get("data") {
                 println!("{}", match serde_json::to_string_pretty(status) {
                 Ok(json) => json,
-                Err(e) => return Err(NutsError::Json(e)),
+                Err(e) => return Err(CliError::JsonError(e)),
             });
             }
         }
+
+        ConfigCommands::Export { file } => {
+            let url = format!("{}/v1/rules/export", server);
+            let response = client.get(&url).send().await?;
+
+            if !response.status().is_success() {
+                return Err(CliError::ApiError {
+                    status: response.status().to_string(),
+                    message: "Failed to export rules".to_string(),
+                });
+            }
+
+            let yaml = response.text().await
+                .map_err(|e| CliError::NetworkError(format!("获取响应失败: {}", e)))?;
+            tokio::fs::write(&file, yaml).await
+                .map_err(|e| CliError::IoError(format!("写入文件失败: {}", e)))?;
+            println!("✅ 规则已导出到: {}", file);
+        }
     }
-    
+
     Ok(())
 }
 
-/// 处理Case子命令（本地案例库查询，无需服务器）
+/// 处理Case子命令（支持本地库和远程API）
 async fn handle_case_command(subcommand: CaseCommands) -> Result<(), CliError> {
     use crate::diagnosis::case_library::CaseLibrary;
     
-    let library = CaseLibrary::new();
+    // 优先使用API，如果失败则回退到本地库
+    match try_case_api(&subcommand).await {
+        Ok(()) => return Ok(()),
+        Err(_) => {
+            println!("⚠️  API连接失败，使用本地案例库");
+            let library = CaseLibrary::new();
+        }
+    }
     
     match subcommand {
         CaseCommands::List { evidence_type } => {
+            let library = CaseLibrary::new();
             let cases = if let Some(et) = evidence_type {
                 library.find_cases_by_evidence(&et)
             } else {
@@ -1752,6 +1868,7 @@ async fn handle_case_command(subcommand: CaseCommands) -> Result<(), CliError> {
         }
         
         CaseCommands::Show { case_id } => {
+            let library = CaseLibrary::new();
             match library.get_case(&case_id) {
                 Some(case) => {
                     println!("\n{}", ansi_bold(&format!("📋 案例详情: {}", case.case_id)));
@@ -1806,6 +1923,7 @@ async fn handle_case_command(subcommand: CaseCommands) -> Result<(), CliError> {
         }
         
         CaseCommands::Match { metrics } => {
+            let library = CaseLibrary::new();
             use std::collections::HashMap;
             
             // 解析指标
@@ -1843,19 +1961,22 @@ async fn handle_case_command(subcommand: CaseCommands) -> Result<(), CliError> {
         }
         
         CaseCommands::Export { file } => {
+            let library = CaseLibrary::new();
             match library.export_yaml() {
                 Ok(yaml) => {
                     tokio::fs::write(&file, yaml).await
                         .map_err(|e| CliError::IoError(format!("无法写入文件 {}: {}", file, e)))?;
-                    println!("✅ 案例库已导出到: {}", file);
+                    println!("\n{}", ansi_bold("✅ 案例库已导出到"));
+                    println!("{}", ansi_dim(&file));
                 }
                 Err(e) => {
-                    return Err(CliError::InvalidInput(format!("导出失败: {}", e)));
+                    return Err(CliError::IoError(format!("导出案例库失败: {}", e)));
                 }
             }
         }
         
         CaseCommands::Stats => {
+            let library = CaseLibrary::new();
             let stats = library.stats();
             println!("\n{}", ansi_bold("📊 案例库统计"));
             println!("{}", ansi_dim(&"─".repeat(50)));
@@ -1888,9 +2009,182 @@ async fn handle_case_command(subcommand: CaseCommands) -> Result<(), CliError> {
             println!("\n{}", ansi_dim(&"💡 提示: 使用 'case list' 查看所有案例"));
             println!();
         }
+        
+        CaseCommands::Completion { shell } => {
+            let script = generate_completion_script(&shell)
+                .map_err(|e| CliError::InternalError(format!("生成补全脚本失败: {}", e)))?;
+            println!("{}", script);
+        }
     }
     
     Ok(())
+}
+
+/// 尝试通过API访问案例库
+async fn try_case_api(subcommand: &CaseCommands) -> Result<(), CliError> {
+    use reqwest;
+    use serde_json;
+    
+    let client = reqwest::Client::new();
+    let base_url = "http://localhost:8080"; // 默认本地服务器
+    
+    match subcommand {
+        CaseCommands::List { evidence_type } => {
+            let mut url = format!("{}/cases", base_url);
+            if let Some(et) = evidence_type {
+                url.push_str(&format!("?evidence_type={}", et));
+            }
+            
+            let response = client.get(&url).send().await
+                .map_err(|e| CliError::NetworkError(format!("请求失败: {}", e)))?;
+            
+            if response.status().is_success() {
+                let cases: serde_json::Value = response.json().await
+                    .map_err(|e| CliError::NetworkError(format!("JSON parsing failed: {}", e)))?;
+                
+                if let Some(cases_array) = cases["cases"].as_array() {
+                    println!("\n{}", ansi_bold("📚 案例库 (API)"));
+                    println!("{}", ansi_dim(&"─".repeat(80)));
+                    println!("{:<30} {:<15} {}", 
+                        ansi_bold("案例ID"),
+                        ansi_bold("证据类型"),
+                        ansi_bold("标题")
+                    );
+                    println!("{}", ansi_dim(&"─".repeat(80)));
+                    
+                    for case in cases_array {
+                        if let (Some(case_id), Some(title), Some(evidence_types)) = (
+                            case["case_id"].as_str(),
+                            case["title"].as_str(),
+                            case["evidence_types"].as_array()
+                        ) {
+                            let etypes = evidence_types.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            println!("{:<30} {:<15} {}",
+                                case_id.chars().take(28).collect::<String>(),
+                                etypes.chars().take(13).collect::<String>(),
+                                title.chars().take(40).collect::<String>()
+                            );
+                        }
+                    }
+                }
+                Ok(())
+            } else {
+                Err(CliError::InvalidInput("API响应格式错误".to_string()))
+            }
+        }
+        
+        CaseCommands::Show { case_id } => {
+            let url = format!("{}/cases/{}", base_url, case_id);
+            let response = client.get(&url).send().await
+                .map_err(|e| CliError::NetworkError(format!("请求失败: {}", e)))?;
+            
+            if response.status().is_success() {
+                let case: serde_json::Value = response.json().await
+                    .map_err(|e| CliError::NetworkError(format!("解析响应失败: {}", e)))?;
+                
+                println!("\n{}", ansi_bold(&format!("📋 案例详情: {}", case["case_id"])));
+                println!("{}", ansi_dim(&"─".repeat(80)));
+                println!("{}: {}", ansi_bold("标题"), case["title"]);
+                println!("{}: {}", ansi_bold("描述"), case["description"]);
+                println!("{}: {}", ansi_bold("证据类型"), case["evidence_types"]);
+                Ok(())
+            } else {
+                Err(CliError::InvalidInput("案例不存在".to_string()))
+            }
+        }
+        
+        CaseCommands::Match { metrics } => {
+            let mut url = format!("{}/cases/match", base_url);
+            if !metrics.is_empty() {
+                url.push_str(&format!("?metrics={}", metrics.join(",")));
+            }
+            
+            let response = client.get(&url).send().await
+                .map_err(|e| CliError::NetworkError(format!("请求失败: {}", e)))?;
+            
+            if response.status().is_success() {
+                let matches: serde_json::Value = response.json().await
+                    .map_err(|e| CliError::NetworkError(format!("解析响应失败: {}", e)))?;
+                
+                println!("\n{}", ansi_bold("🔍 案例匹配结果 (API)"));
+                println!("{}", ansi_dim(&"─".repeat(70)));
+                
+                if let Some(matches_array) = matches["matches"].as_array() {
+                    for case_match in matches_array {
+                        if let (title, confidence) = (
+                            case_match["title"].as_str(),
+                            case_match["confidence"].as_f64()
+                        ) {
+                            let bar_width = (confidence.unwrap_or(0.0) * 20.0) as usize;
+                            let bar: String = std::iter::repeat('█').take(bar_width).collect();
+                            println!("  {:<25} [{}] {:.1}%",
+                                title.unwrap_or("unknown").chars().take(23).collect::<String>(),
+                                bar,
+                                confidence.unwrap_or(0.0)
+                            );
+                        }
+                    }
+                }
+                Ok(())
+            } else {
+                Err(CliError::InvalidInput("API响应格式错误".to_string()))
+            }
+        }
+        
+        CaseCommands::Export { file } => {
+            let url = format!("{}/cases/export", base_url);
+            let response = client.get(&url).send().await
+                .map_err(|e| CliError::NetworkError(format!("请求失败: {}", e)))?;
+            
+            if response.status().is_success() {
+                let yaml = response.text().await
+                    .map_err(|e| CliError::NetworkError(format!("获取响应失败: {}", e)))?;
+                
+                tokio::fs::write(&file, yaml).await
+                    .map_err(|e| CliError::IoError(format!("写入文件失败: {}", e)))?;
+                
+                println!("✅ 案例库已导出到: {}", file);
+                Ok(())
+            } else {
+                Err(CliError::InvalidInput("导出失败".to_string()))
+            }
+        }
+        
+        CaseCommands::Stats => {
+            let url = format!("{}/cases/stats", base_url);
+            let response = client.get(&url).send().await
+                .map_err(|e| CliError::NetworkError(format!("请求失败: {}", e)))?;
+            
+            if response.status().is_success() {
+                let stats: serde_json::Value = response.json().await
+                    .map_err(|e| CliError::NetworkError(format!("解析响应失败: {}", e)))?;
+                
+                println!("\n{}", ansi_bold("📊 案例库统计 (API)"));
+                println!("{}", ansi_dim(&"─".repeat(50)));
+                println!("  总案例数: {}", ansi_cyan(&stats["total_cases"].to_string()));
+                println!("  总技能数: {}", ansi_cyan(&stats["total_skills"].to_string()));
+                
+                if let Some(by_evidence) = stats["by_evidence_type"].as_object() {
+                    println!("\n{}", ansi_bold("按证据类型分布:"));
+                    for (etype, count) in by_evidence {
+                        println!("  • {:<20} {:>3} 个", etype, count);
+                    }
+                }
+                Ok(())
+            } else {
+                Err(CliError::InvalidInput("API响应格式错误".to_string()))
+            }
+        }
+        CaseCommands::Completion { shell } => {
+            let script = generate_completion_script(&shell)
+                .map_err(|e| CliError::InternalError(format!("生成补全脚本失败: {}", e)))?;
+            println!("{}", script);
+            Ok(())
+        }
+    }
 }
 
 /// 打印Pod列表
@@ -1908,7 +2202,7 @@ fn print_pod_list(pods: &[PodSummaryInfo], format: ListOutputFormat) {
             });
             println!("{}", match serde_json::to_string_pretty(&json) {
                 Ok(json) => json,
-                Err(e) => return Err(NutsError::Json(e)),
+                Err(e) => { eprintln!("JSON序列化错误: {}", e); return; },
             });
         }
         ListOutputFormat::Simple => {
@@ -1968,11 +2262,12 @@ fn print_pod_list_json(pods: &[serde_json::Value]) {
 }
 
 /// Pod列表专用的ANSI辅助函数
-fn ansi_bold(s: &str) -> String { format!("\x1B[1m{}\x1B[0m", s) }
-fn ansi_dim(s: &str) -> String { format!("\x1B[2m{}\x1B[0m", s) }
-fn ansi_cyan(s: &str) -> String { format!("\x1B[36m{}\x1B[0m", s) }
-fn ansi_red(s: &str) -> String { format!("\x1B[31m{}\x1B[0m", s) }
-fn ansi_yellow(s: &str) -> String { format!("\x1B[33m{}\x1B[0m", s) }
+/// ANSI helper functions - respect NO_COLOR / TTY detection
+fn ansi_bold(s: &str) -> String { if is_color_enabled() { format!("\x1B[1m{}\x1B[0m", s) } else { s.to_string() } }
+fn ansi_dim(s: &str) -> String { if is_color_enabled() { format!("\x1B[2m{}\x1B[0m", s) } else { s.to_string() } }
+fn ansi_cyan(s: &str) -> String { if is_color_enabled() { format!("\x1B[36m{}\x1B[0m", s) } else { s.to_string() } }
+fn ansi_red(s: &str) -> String { if is_color_enabled() { format!("\x1B[31m{}\x1B[0m", s) } else { s.to_string() } }
+fn ansi_yellow(s: &str) -> String { if is_color_enabled() { format!("\x1B[33m{}\x1B[0m", s) } else { s.to_string() } }
 
 #[cfg(test)]
 mod tests {
@@ -2001,7 +2296,7 @@ mod tests {
                 assert_eq!(namespace, "default");
                 assert_eq!(evidence_types, vec!["block_io", "network"]);
             }
-            _ => return Err(NutsError::internal("Expected Trigger command"));,
+            _ => panic!("Expected Trigger command"),
         }
     }
 }

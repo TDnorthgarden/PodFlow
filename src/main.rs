@@ -9,14 +9,16 @@ use nuts_observer::api::nri_v3_enhanced::{router as nri_v3_enhanced_router, NriV
 use nuts_observer::api::trigger::router as trigger_router;
 use nuts_observer::api::health::{router as health_router, AppState};
 use nuts_observer::api::diagnosis::{router as diagnosis_router, DiagnosisApiState};
+use nuts_observer::api::case::router as case_router;
 use axum::Router;
 use nuts_observer::collector::nri_v3::create_nri_v3;
-use nuts_observer::collector::nri_mapping::{NriMappingTable, NriEvent};
 use nuts_observer::collector::oom_events::{OomEventListener, OomListenerConfig};
 
 // Containerd NRI 官方协议支持 (仅在启用 nri-grpc feature 时可用)
 #[cfg(feature = "nri-grpc")]
 use nuts_observer::collector::nri_containerd::ContainerdNriConfig;
+#[cfg(feature = "nri-grpc")]
+use nuts_observer::collector::nri_mapping_v2::NriEvent;
 #[cfg(feature = "nri-grpc")]
 use tokio::sync::mpsc;
 use nuts_observer::config::Config;
@@ -103,19 +105,24 @@ async fn run_server() {
     tracing::info!("Configuration loaded: log_level={}, ai_enabled={}, alert_enabled={}",
         config_read.log_level, config_read.ai.enabled, config_read.alert.enabled);
 
-    // 初始化 NRI 映射表 (V1 - 兼容现有API)
-    let nri_table = Arc::new(NriMappingTable::new());
-    
     // 初始化 NRI V3 (优化版本 - 包含DashMap、版本控制、持久化等)
+    tracing::info!("Starting NRI V3 initialization...");
     let nri_v3 = match create_nri_v3().await {
-        Ok(nri) => nri,
+        Ok(nri) => {
+            tracing::info!("NRI V3 initialized successfully");
+            nri
+        },
         Err(e) => {
-            tracing::error!("Failed to initialize NRI V3: {}", e);
+            tracing::error!("Failed to initialize NRI V3: {:?}", e);
+            eprintln!("FATAL: Failed to initialize NRI V3: {:?}", e);
             return;
         }
     };
     let nri_v3 = Arc::new(nri_v3);
-    tracing::info!("NRI mapping table initialized");
+
+    // 使用 NRI V3 内部的映射表作为唯一实例，所有消费者共享同一数据源
+    let nri_table = nri_v3.table();
+    tracing::info!("NRI mapping table initialized (shared with V3)");
 
     // 启动 Containerd NRI Plugin 服务 (官方协议)
     #[cfg(feature = "nri-grpc")]
@@ -123,7 +130,8 @@ async fn run_server() {
         let (nri_event_tx, mut nri_event_rx) = mpsc::channel::<NriEvent>(1000);
 
         // 从环境变量加载 NRI 配置（带验证）
-        let containerd_nri_config = ContainerdNriConfig::from_env_or_default();
+        let nri_cfg = config_read.nri.clone();
+        let containerd_nri_config = ContainerdNriConfig::from_nri_config(&nri_cfg);
         
         // 记录最终配置
         tracing::info!(
@@ -134,8 +142,8 @@ async fn run_server() {
             containerd_nri_config.auto_register
         );
 
-        // 获取 NRI V3 的映射表用于 containerd NRI 服务
-        let nri_v3_table = Arc::clone(&nri_v3.table());
+        // 使用共享的映射表实例
+        let nri_v3_table = Arc::clone(&nri_table);
         let containerd_nri = nuts_observer::collector::nri_containerd::ContainerdNriPlugin::new(
             containerd_nri_config,
             nri_v3_table,
@@ -149,12 +157,12 @@ async fn run_server() {
             }
         });
 
-        // 处理从 containerd 接收的事件，更新到映射表
-        let nri_v3_table_for_events = Arc::clone(&nri_v3.table());
+        // 处理从 containerd 接收的事件，通过 V3 批量处理器提交
+        let nri_v3_for_events = Arc::clone(&nri_v3);
         tokio::spawn(async move {
             while let Some(event) = nri_event_rx.recv().await {
-                if let Err(e) = nri_v3_table_for_events.update_from_nri(event) {
-                    tracing::warn!("[ContainerdNri] Failed to update mapping table: {}", e);
+                if let Err(e) = nri_v3_for_events.submit_event(event).await {
+                    tracing::warn!("[ContainerdNri] Failed to submit event to V3 batch processor: {}", e);
                 }
             }
         });
@@ -283,31 +291,35 @@ async fn run_server() {
         let queue_for_router = Arc::new(queue);
         let mut app = Router::new()
             .merge(trigger_router(Arc::clone(&nri_table), Some(queue_for_router), Some(ai_adapter)))
-            .merge(nri_router(Arc::clone(&nri_table)))
+            .merge(nri_router(Arc::clone(&nri_v3)))
             .merge(nri_v3_enhanced_router(nri_v3_api_state))
             .merge(health_router(app_state));
-        
+
         // 添加诊断查询路由（AI 启用时）
         let diagnosis_state = Arc::new(DiagnosisApiState::new(Arc::clone(&store)));
         app = app.merge(diagnosis_router(diagnosis_state));
         tracing::info!("AI diagnosis query API enabled");
         
+        // 添加案例库API路由
+        app = app.merge(case_router());
+        tracing::info!("Case library API enabled");
+
         drop(config_read);  // 释放读取锁
         (app, Some(store))
     } else {
         tracing::info!("AI async enhancement system disabled");
-        
+
         // 创建诊断存储（空）
         let store = Arc::new(AiResultStore::new());
-        
+
         // 创建应用状态
         let app_state = Arc::new(AppState::new(Arc::clone(&nri_table)));
         let nri_v3_api_state = Arc::new(NriV3ApiState::new(Arc::clone(&nri_v3)));
-        
+
         // 构建基础路由（含诊断查询，但 AI 未启用时返回空）
         let mut app = Router::new()
             .merge(trigger_router(Arc::clone(&nri_table), None, None))
-            .merge(nri_router(Arc::clone(&nri_table)))
+            .merge(nri_router(Arc::clone(&nri_v3)))
             .merge(nri_v3_enhanced_router(nri_v3_api_state))
             .merge(health_router(app_state));
         
@@ -386,14 +398,14 @@ fn load_config() -> Result<Config> {
     for path in &config_paths {
         if std::path::Path::new(path).exists() {
             tracing::info!("Loading config from: {}", path);
-            return Config::from_file(path).map_err(|e| NutsError::Config(e.to_string()));
+            return Config::from_file(path).map_err(|e| NutsError::config(&e.to_string()));
         }
     }
 
     // 如果没有找到配置文件，检查环境变量
     if let Ok(config_path) = std::env::var("NUTS_CONFIG") {
         tracing::info!("Loading config from NUTS_CONFIG: {}", config_path);
-        return Config::from_file(config_path).map_err(|e| NutsError::Config(e.to_string()));
+        return Config::from_file(config_path).map_err(|e| NutsError::config(&e.to_string()));
     }
 
     // 返回默认配置

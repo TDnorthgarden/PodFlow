@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tonic::{Request, Response, Status, Streaming};
 
-use super::nri_mapping::{NriContainerInfo, NriEvent, NriPodEvent};
+use super::nri_mapping_v2::{NriContainerInfo, NriEvent, NriPodEvent};
 use super::nri_mapping_v2::NriMappingTableV2;
 
 /// 从 NRI 官方 protobuf 生成的代码
@@ -169,6 +169,7 @@ pub struct TlsConfig {
 pub struct NriGrpcService {
     table: Arc<NriMappingTableV2>,
     event_tx: mpsc::Sender<nri_proto::EventMessage>,
+    batch_tx: mpsc::Sender<NriEvent>, // V3 batch processor sender
     plugin_info: Arc<std::sync::RwLock<Option<PluginInfo>>>,
 }
 
@@ -187,10 +188,12 @@ impl NriGrpcService {
     pub fn new(
         table: Arc<NriMappingTableV2>,
         event_tx: mpsc::Sender<nri_proto::EventMessage>,
+        batch_tx: mpsc::Sender<NriEvent>, // V3 batch processor sender
     ) -> Self {
         Self {
             table,
             event_tx,
+            batch_tx,
             plugin_info: Arc::new(std::sync::RwLock::new(None)),
         }
     }
@@ -327,12 +330,12 @@ impl NriGrpcService {
             };
         }
 
-        // 转换并更新映射表
+        // 转换并发送到批量处理器
         if let Some(event) = self.convert_event(&msg) {
-            if let Err(e) = self.table.update_from_nri(event) {
+            if let Err(e) = self.batch_tx.try_send(event) {
                 return nri_proto::EventResponse {
                     processed: false,
-                    error: Some(format!("Failed to update mapping: {:?}", e)),
+                    error: Some(format!("Failed to send to batch processor: {:?}", e)),
                     updates: vec![],
                 };
             }
@@ -449,12 +452,13 @@ impl NriPlugin for NriGrpcService {
 pub async fn start_nri_grpc_server(
     table: Arc<NriMappingTableV2>,
     config: GrpcServiceConfig,
+    batch_tx: mpsc::Sender<NriEvent>, // V3 batch processor sender
 ) -> Result<tokio::task::JoinHandle<()>, GrpcError> {
     // 创建事件通道
     let (event_tx, mut event_rx) = mpsc::channel(10000);
 
     // 创建服务
-    let _service = NriGrpcService::new(table, event_tx);
+    let _service = NriGrpcService::new(table, event_tx, batch_tx);
 
     // 启动后台事件处理器
     let _processor_handle = tokio::spawn(async move {
@@ -562,7 +566,8 @@ mod tests {
     fn test_event_conversion() -> Result<(), Box<dyn std::error::Error>> {
         let table = Arc::new(NriMappingTableV2::new());
         let (tx, _rx) = mpsc::channel(10);
-        let service = NriGrpcService::new(table, tx);
+        let (batch_tx, _batch_rx) = mpsc::channel(10);
+        let service = NriGrpcService::new(table, tx, batch_tx);
 
         let msg = nri_proto::EventMessage {
             event_type: nri_proto::EventType::RunPodSandbox,
@@ -592,7 +597,8 @@ mod tests {
     async fn test_plugin_registration() {
         let table = Arc::new(NriMappingTableV2::new());
         let (tx, _rx) = mpsc::channel(10);
-        let service = NriGrpcService::new(table, tx);
+        let (batch_tx, _batch_rx) = mpsc::channel(10);
+        let service = NriGrpcService::new(table, tx, batch_tx);
 
         let request = nri_proto::RegisterPluginRequest {
             plugin_name: "test-plugin".to_string(),

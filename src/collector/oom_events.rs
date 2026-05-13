@@ -3,7 +3,8 @@
 //! 监听内核 OOM Kill 事件，自动触发故障诊断
 
 use crate::types::error::NutsError;
-use crate::collector::nri_mapping::{NriMappingTable, AttributionInfo};
+use crate::collector::nri_mapping_v2::NriMappingTableV2;
+use crate::collector::nri_mapping_v2::AttributionInfo;
 use serde::Deserialize;
 use std::process::{Command, Stdio};
 use std::io::{BufRead, BufReader};
@@ -46,7 +47,7 @@ impl Default for OomListenerConfig {
             evidence_types: vec!["block_io".to_string(), "syscall_latency".to_string()],
             collection_window_secs: 10,
             cooldown_secs: 60,
-            server_url: "http://localhost:3000".to_string(),
+            server_url: "http://localhost:8080".to_string(),
         }
     }
 }
@@ -54,13 +55,13 @@ impl Default for OomListenerConfig {
 /// OOM 事件监听器
 pub struct OomEventListener {
     config: OomListenerConfig,
-    nri_table: Arc<NriMappingTable>,
+    nri_table: Arc<NriMappingTableV2>,
     last_trigger: std::sync::Mutex<std::collections::HashMap<String, u64>>,
 }
 
 impl OomEventListener {
     /// 创建新的 OOM 监听器
-    pub fn new(config: OomListenerConfig, nri_table: Arc<NriMappingTable>) -> Self {
+    pub fn new(config: OomListenerConfig, nri_table: Arc<NriMappingTableV2>) -> Self {
         Self {
             config,
             nri_table,
@@ -143,9 +144,9 @@ impl OomEventListener {
                     pod_uid: None,
                     container_id: None,
                     cgroup_id: String::new(),
-                    status: crate::collector::nri_mapping::AttributionStatus::Unknown,
+                    status: crate::collector::nri_mapping_v2::AttributionStatus::Unknown,
                     confidence: 0.0,
-                    source: crate::collector::nri_mapping::AttributionSource::Uncertain,
+                    source: crate::collector::nri_mapping_v2::AttributionSource::Uncertain,
                     mapping_version: "0".to_string(),
                 }
             }
@@ -267,7 +268,7 @@ mod tests {
     #[test]
     fn test_cooldown_mechanism() {
         let config = OomListenerConfig::default();
-        let nri_table = Arc::new(NriMappingTable::new());
+        let nri_table = Arc::new(NriMappingTableV2::new());
         let listener = OomEventListener::new(config, nri_table);
 
         // 第一次触发

@@ -4,6 +4,7 @@
 
 pub mod types;
 pub mod api;
+pub mod cli;
 pub mod collector;
 pub mod config;
 pub mod diagnosis;

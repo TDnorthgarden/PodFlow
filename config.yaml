@@ -25,3 +25,59 @@ alert:
 
 # 条件触发器配置
 condition_triggers: []
+
+# NRI (Node Resource Interface) 配置
+nri:
+  # 是否启用 containerd NRI 插件
+  enabled: true
+  # 插件监听的 Unix Socket 路径
+  socket_path: "/var/run/nri/nuts-observer.sock"
+  # 插件名称
+  plugin_name: "nuts-observer"
+  # 插件索引 (00-99)
+  plugin_idx: "00"
+  # NRI 协议版本
+  nri_version: "1.0.0"
+  # 是否向 containerd 自动注册
+  auto_register: true
+  # containerd NRI Runtime Socket 路径
+  runtime_socket_path: "/var/run/nri/nri.sock"
+  # 重试配置
+  retry:
+    max_retries: 5
+    initial_delay_ms: 100
+    max_delay_ms: 30000
+    backoff_multiplier: 2.0
+  # 熔断器配置
+  circuit_breaker:
+    failure_threshold: 5
+    reset_timeout_secs: 30
+    half_open_max_calls: 3
+  
+  # NRI V3 特定配置
+  v3:
+    # 是否启用 V3 优化
+    enabled: true
+    # 持久化配置
+    persistence:
+      enabled: true
+      db_path: "/var/lib/nuts-observer/nri_v3.db"
+      snapshot_interval_secs: 300
+      max_snapshots: 10
+      compression: true
+    # 批量处理配置
+    batch:
+      worker_threads: 2
+      max_queue_depth: 10000
+      batch_size: 100
+      max_buffer_ms: 100
+      enable_priority: true
+      delete_priority_boost: 10
+    # 是否启用指标收集
+    enable_metrics: true
+    # 预分配容量配置
+    capacity:
+      pods: 1000
+      containers: 2000
+      cgroups: 2000
+      pids: 10000

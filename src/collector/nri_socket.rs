@@ -13,7 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 
-use super::nri_mapping::{NriEvent, NriPodEvent, NriContainerInfo};
+use super::nri_mapping_v2::{NriEvent, NriPodEvent, NriContainerInfo};
 use super::nri_mapping_v2::NriMappingTableV2;
 
 /// Unix Socket 配置
@@ -252,6 +252,15 @@ fn parse_nri_frame(data: &[u8]) -> Result<Vec<NriEvent>, String> {
                     pod_uid: frame_event.pod_uid,
                 }
             }
+            "REMOVE_CONTAINER" | "RemoveContainer" => {
+                let container_id = frame_event.containers.first()
+                    .map(|c| c.container_id.clone())
+                    .unwrap_or_default();
+                NriEvent::RemoveContainer {
+                    pod_uid: frame_event.pod_uid,
+                    container_id,
+                }
+            }
             other => {
                 return Err(format!("Unknown event type: {}", other));
             }
@@ -293,6 +302,19 @@ fn serialize_nri_event(event: &NriEvent) -> Result<String, serde_json::Error> {
                 pod_name: String::new(),
                 namespace: String::new(),
                 containers: vec![],
+            }
+        }
+        NriEvent::RemoveContainer { pod_uid, container_id } => {
+            NriFrameEvent {
+                event_type: "REMOVE_CONTAINER".to_string(),
+                pod_uid: pod_uid.clone(),
+                pod_name: String::new(),
+                namespace: String::new(),
+                containers: vec![NriFrameContainer {
+                    container_id: container_id.clone(),
+                    cgroup_ids: vec![],
+                    pids: vec![],
+                }],
             }
         }
     };
@@ -340,95 +362,51 @@ impl std::error::Error for SocketError {
 /// 从 channel 接收事件并批量处理
 pub fn start_event_processor(
     mut event_rx: mpsc::Receiver<NriEvent>,
+    batch_tx: mpsc::Sender<NriEvent>,
     table: Arc<NriMappingTableV2>,
     version_mgr: Option<Arc<super::nri_version::EventVersionManager>>,
-    batch_size: usize,
-    flush_interval_ms: u64,
 ) -> tokio::task::JoinHandle<()> {
-
     tokio::spawn(async move {
-        let mut batch = Vec::with_capacity(batch_size);
-        let mut flush_interval = tokio::time::interval(
-            tokio::time::Duration::from_millis(flush_interval_ms)
-        );
+        while let Some(event) = event_rx.recv().await {
+            // 版本检查
+            if let Some(vm) = version_mgr.as_deref() {
+                let pod_uid = match &event {
+                    NriEvent::AddOrUpdate(pod) => &pod.pod_uid,
+                    NriEvent::Delete { pod_uid } => &pod_uid,
+                    NriEvent::RemoveContainer { pod_uid, .. } => pod_uid,
+                };
 
-        loop {
-            tokio::select! {
-                Some(event) = event_rx.recv() => {
-                    batch.push(event);
-
-                    if batch.len() >= batch_size {
-                        process_batch(&batch, &table, version_mgr.as_deref()).await;
-                        batch.clear();
+                let version = vm.generate_version();
+                match vm.try_update(pod_uid, version) {
+                    Ok(true) => {
+                        // 版本检查通过，发送到V3批量处理器
+                        if let Err(e) = batch_tx.try_send(event) {
+                            tracing::error!("[NriSocket] Failed to send event to V3 batch processor: {:?}", e);
+                        }
+                    }
+                    Ok(false) => {
+                        tracing::warn!("[NriSocket] Event version {} is stale for pod {}, skipping", version, pod_uid);
+                    }
+                    Err(e) => {
+                        tracing::error!("[NriSocket] Version check failed: {:?}", e);
                     }
                 }
-                _ = flush_interval.tick() => {
-                    if !batch.is_empty() {
-                        process_batch(&batch, &table, version_mgr.as_deref()).await;
-                        batch.clear();
-                    }
-                }
-                else => {
-                    // Channel 关闭
-                    tracing::info!("[NriSocket] Event channel closed, processor exiting");
-                    break;
+            } else {
+                // 无版本控制，直接发送到V3批量处理器
+                if let Err(e) = batch_tx.try_send(event) {
+                    tracing::error!("[NriSocket] Failed to send event to V3 batch processor: {:?}", e);
                 }
             }
         }
-
-        // 处理剩余事件
-        if !batch.is_empty() {
-            process_batch(&batch, &table, version_mgr.as_deref()).await;
-        }
+        tracing::info!("[NriSocket] Event channel closed, forwarder exiting");
     })
-}
-
-/// 批量处理事件
-async fn process_batch(
-    batch: &[NriEvent],
-    table: &NriMappingTableV2,
-    version_mgr: Option<&super::nri_version::EventVersionManager>,
-) {
-    for event in batch {
-        // 版本检查
-        if let Some(vm) = version_mgr {
-            let pod_uid = match event {
-                NriEvent::AddOrUpdate(pod) => &pod.pod_uid,
-                NriEvent::Delete { pod_uid } => pod_uid,
-            };
-
-            let version = vm.generate_version();
-            match vm.try_update(pod_uid, version) {
-                Ok(true) => {
-                    // 版本检查通过，处理事件
-                    if let Err(e) = table.update_from_nri(event.clone()) {
-                        tracing::error!("[NriSocket] Failed to update table: {:?}", e);
-                    }
-                }
-                Ok(false) => {
-                    tracing::debug!("[NriSocket] Stale event dropped for pod {}", pod_uid);
-                }
-                Err(e) => {
-                    tracing::error!("[NriSocket] Version check error: {}", e);
-                }
-            }
-        } else {
-            // 无版本控制，直接处理
-            if let Err(e) = table.update_from_nri(event.clone()) {
-                tracing::error!("[NriSocket] Failed to update table: {:?}", e);
-            }
-        }
-    }
-
-    tracing::debug!("[NriSocket] Processed batch of {} events", batch.len());
 }
 
 /// 便捷的启动函数
 pub async fn start_unix_socket_nri(
     table: Arc<NriMappingTableV2>,
     config: UnixSocketConfig,
-    batch_size: usize,
-    flush_interval_ms: u64,
+    batch_tx: mpsc::Sender<NriEvent>, // V3 batch processor sender
 ) -> Result<(tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>), SocketError> {
     // 创建事件通道
     let (event_tx, event_rx) = mpsc::channel(10000);
@@ -444,16 +422,25 @@ pub async fn start_unix_socket_nri(
         }
     });
 
-    // 启动批量处理器
-    let processor_handle = start_event_processor(
-        event_rx,
-        table,
-        Some(version_mgr),
-        batch_size,
-        flush_interval_ms,
-    );
+    // 启动事件转发器（使用V3批量处理器的sender）
+    let processor_handle = tokio::spawn(async move {
+        forward_events_to_v3(event_rx, batch_tx).await;
+    });
 
     Ok((socket_handle, processor_handle))
+}
+
+/// 转发事件到V3批量处理器
+async fn forward_events_to_v3(
+    mut event_rx: tokio::sync::mpsc::Receiver<crate::collector::nri_mapping_v2::NriEvent>,
+    batch_tx: tokio::sync::mpsc::Sender<crate::collector::nri_mapping_v2::NriEvent>,
+) {
+    while let Some(event) = event_rx.recv().await {
+        if let Err(e) = batch_tx.send(event).await {
+            tracing::error!("[NriSocket] Failed to forward event to V3 processor: {}", e);
+            break;
+        }
+    }
 }
 
 #[cfg(test)]

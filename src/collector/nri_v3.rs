@@ -23,12 +23,12 @@
 
 use std::sync::Arc;
 
-use super::nri_mapping::NriEvent;
+use super::nri_mapping_v2::NriEvent;
 use super::nri_mapping_v2::{NriMappingTableV2, NriMappingStats};
 use super::nri_version::EventVersionManager;
 use super::nri_persist::{restore_from_persist, PersistConfig, NriPersistStore};
 use super::nri_batch::{BatchProcessorConfig, NriBatchProcessor};
-use crate::metrics::{NriMetrics, create_metrics};
+use crate::metrics::{UnifiedMetrics, create_metrics};
 
 /// V3 配置
 #[derive(Debug, Clone)]
@@ -86,7 +86,7 @@ pub struct NriV3 {
     /// 批量处理器
     batch_processor: NriBatchProcessor,
     /// 指标收集器
-    metrics: Arc<NriMetrics>,
+    metrics: Arc<UnifiedMetrics>,
     /// 持久化存储（可选）
     persist_store: Option<Arc<NriPersistStore>>,
     /// 后台任务句柄
@@ -110,9 +110,9 @@ impl NriV3 {
         let metrics = if config.enable_metrics {
             let m = create_metrics();
             tracing::info!("[NriV3] Metrics collection enabled");
-            m
+            Arc::new(m)
         } else {
-            create_metrics() // 空实现
+            Arc::new(create_metrics()) // 空实现
         };
 
         // 4. 创建持久化存储
@@ -183,10 +183,10 @@ impl NriV3 {
                 
                 // 更新映射表大小指标
                 metrics_clone.update_mapping_table_size(
-                    table_clone.pod_count(),
-                    table_clone.container_count(),
-                    table_clone.cgroup_count(),
-                    table_clone.pid_count(),
+                    table_clone.pod_count() as u64,
+                    table_clone.container_count() as u64,
+                    table_clone.cgroup_count() as u64,
+                    table_clone.pid_count() as u64,
                 );
             }
         });
@@ -261,8 +261,8 @@ impl NriV3 {
             .map_err(|e| NriV3Error::BatchError(e.to_string()))?;
 
         // 记录指标
-        let duration_us = start.elapsed().as_micros() as u64;
-        self.metrics.record_event("submitted", duration_us);
+        let _duration_us = start.elapsed().as_micros() as u64;
+        self.metrics.record_containerd_event(true);
 
         Ok(())
     }
@@ -279,7 +279,7 @@ impl NriV3 {
     }
 
     /// 获取指标收集器
-    pub fn metrics(&self) -> Arc<NriMetrics> {
+    pub fn metrics(&self) -> Arc<UnifiedMetrics> {
         Arc::clone(&self.metrics)
     }
 
@@ -408,7 +408,7 @@ pub async fn create_nri_v3_with_config(config: NriV3Config) -> Result<NriV3, Nri
 mod tests {
     use super::*;
     use crate::types::error::NutsError;
-    use crate::collector::nri_mapping::{NriContainerInfo, NriPodEvent};
+    use crate::collector::nri_mapping_v2::{NriContainerInfo, NriPodEvent};
 
     #[tokio::test]
     async fn test_nri_v3_creation() -> Result<(), Box<dyn std::error::Error>> {

@@ -5,86 +5,165 @@ use serde_json;
 use serde_yaml;
 use thiserror::Error;
 
+// Axum response support
+#[cfg(feature = "api")]
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+
 /// 统一的错误类型
 #[derive(Error, Debug)]
 pub enum NutsError {
-    /// IO错误
-    #[error("IO错误: {0}")]
+    /// IO error
+    #[error("IO error: {0}")]
     Io(#[from] io::Error),
     
-    /// JSON序列化/反序列化错误
-    #[error("JSON错误: {0}")]
+    /// JSON serialization/deserialization error
+    #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-    
-    /// YAML序列化/反序列化错误
-    #[error("YAML错误: {0}")]
+
+    /// YAML serialization/deserialization error
+    #[error("YAML error: {0}")]
     Yaml(#[from] serde_yaml::Error),
-    
-    /// 锁获取失败
-    #[error("锁获取失败: {0}")]
+
+    /// Network error
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
+    /// Parse error
+    #[error("Parse error: {0}")]
+    JsonError(String),
+
+    /// Request error
+    #[error("Request error: {0}")]
+    RequestError(String),
+
+    /// Lock error
+    #[error("Lock error: {0}")]
     LockError(String),
-    
-    /// 网络错误
-    #[error("网络错误: {0}")]
-    Network(String),
-    
-    /// 配置错误
-    #[error("配置错误: {0}")]
-    Config(String),
-    
-    /// 验证错误
-    #[error("验证错误: {0}")]
+
+    /// Validation error
+    #[error("Validation error: {0}")]
     Validation(String),
-    
-    /// 未找到资源
-    #[error("未找到: {0}")]
+
+    /// Not found error
+    #[error("Not found: {0}")]
     NotFound(String),
-    
-    /// 内部错误
-    #[error("内部错误: {0}")]
-    Internal(String),
-    
-    /// 自定义错误
+
+    /// Invalid input
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    /// Configuration error
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+
+    /// IO error
+    #[error("IO error: {0}")]
+    IoError(String),
+
+    /// Authentication failed
+    #[error("Authentication failed: {0}")]
+    AuthError(String),
+
+    /// Permission denied
+    #[error("Permission denied: {0}")]
+    PermissionError(String),
+
+    /// Data error
+    #[error("Data error: {0}")]
+    DataError(String),
+
+    /// Internal error
+    #[error("Internal error: {0}")]
+    InternalError(String),
+
+    /// Unknown error
+    #[error("Unknown error: {0}")]
+    UnknownError(String),
+
+    /// Custom error
     #[error("{0}")]
     Custom(String),
 }
 
 impl NutsError {
-    /// 创建锁错误
+    /// Create request error
+    pub fn request_error(msg: &str) -> Self {
+        NutsError::RequestError(msg.to_string())
+    }
+    
+    /// Create lock error
     pub fn lock_error(msg: &str) -> Self {
         NutsError::LockError(msg.to_string())
     }
     
-    /// 创建网络错误
+    /// Create network error
     pub fn network(msg: &str) -> Self {
-        NutsError::Network(msg.to_string())
+        NutsError::NetworkError(msg.to_string())
     }
     
-    /// 创建配置错误
+    /// Create config error
     pub fn config(msg: &str) -> Self {
-        NutsError::Config(msg.to_string())
+        NutsError::ConfigError(msg.to_string())
     }
     
-    /// 创建验证错误
+    /// Create validation error
     pub fn validation(msg: &str) -> Self {
         NutsError::Validation(msg.to_string())
     }
     
-    /// 创建未找到错误
+    /// Create not-found error
     pub fn not_found(msg: &str) -> Self {
         NutsError::NotFound(msg.to_string())
     }
     
-    /// 创建内部错误
+    /// Create internal error
     pub fn internal(msg: &str) -> Self {
-        NutsError::Internal(msg.to_string())
+        NutsError::InternalError(msg.to_string())
     }
     
-    /// 创建自定义错误
+    /// Create custom error
     pub fn custom(msg: &str) -> Self {
         NutsError::Custom(msg.to_string())
     }
 }
 
-/// Result类型别名
+/// Result type alias
 pub type Result<T> = std::result::Result<T, NutsError>;
+
+#[cfg(feature = "api")]
+impl IntoResponse for NutsError {
+    fn into_response(self) -> Response {
+        let (status, error_message) = match self {
+            NutsError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            NutsError::Validation(msg) => (StatusCode::BAD_REQUEST, msg),
+            NutsError::ConfigError(msg) => (StatusCode::BAD_REQUEST, msg),
+            NutsError::NetworkError(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
+            NutsError::LockError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            NutsError::Io(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.to_string()),
+            NutsError::Json(msg) => (StatusCode::BAD_REQUEST, msg.to_string()),
+            NutsError::Yaml(msg) => (StatusCode::BAD_REQUEST, msg.to_string()),
+            NutsError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            NutsError::Custom(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            // Handle other variants
+            NutsError::RequestError(msg) => (StatusCode::BAD_REQUEST, msg),
+            NutsError::InvalidInput(msg) => (StatusCode::BAD_REQUEST, msg),
+            NutsError::AuthError(msg) => (StatusCode::UNAUTHORIZED, msg),
+            NutsError::PermissionError(msg) => (StatusCode::FORBIDDEN, msg),
+            NutsError::DataError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            NutsError::UnknownError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            NutsError::IoError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            NutsError::JsonError(msg) => (StatusCode::BAD_REQUEST, msg),
+        };
+
+        let body = Json(serde_json::json!({
+            "error": error_message,
+            "status": status.as_u16()
+        }));
+
+        (status, body).into_response()
+    }
+}

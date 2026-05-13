@@ -194,9 +194,9 @@ impl NriPersistStore {
     pub fn snapshot_table(
         &self,
         pods: &DashMap<String, super::nri_mapping_v2::PodInfo>,
-        containers: &DashMap<String, super::nri_mapping::ContainerMapping>,
-        cgroups: &DashMap<String, super::nri_mapping::CgroupMapping>,
-        pids: &DashMap<u32, super::nri_mapping::PidMapping>,
+        containers: &DashMap<String, super::nri_mapping_v2::ContainerMapping>,
+        cgroups: &DashMap<String, super::nri_mapping_v2::CgroupMapping>,
+        pids: &DashMap<u32, super::nri_mapping_v2::PidMapping>,
     ) -> Result<SnapshotInfo, PersistError> {
         let start = std::time::Instant::now();
         let mut batch = sled::Batch::default();
@@ -249,7 +249,22 @@ impl NriPersistStore {
         };
 
         // 保存快照元数据
+        // Calculate checksum for data integrity verification
+        let checksum = {
+            use std::hash::{Hash, Hasher};
+            use std::collections::hash_map::DefaultHasher;
+            let mut hasher = DefaultHasher::new();
+            info.pod_count.hash(&mut hasher);
+            info.container_count.hash(&mut hasher);
+            info.cgroup_count.hash(&mut hasher);
+            info.pid_count.hash(&mut hasher);
+            info.timestamp_ms.hash(&mut hasher);
+            hasher.finish() as u32
+        };
+
         self.save_metadata(&PersistMetadata {
+            schema_version: PERSIST_SCHEMA_VERSION,
+            checksum: Some(checksum),
             last_snapshot_ms: info.timestamp_ms,
             pod_count: info.pod_count,
             container_count: info.container_count,
@@ -284,7 +299,7 @@ pub struct PodInfoRecord {
     pub pod_uid: String,
     pub pod_name: String,
     pub namespace: String,
-    pub containers: Vec<super::nri_mapping::ContainerMapping>,
+    pub containers: Vec<super::nri_mapping_v2::ContainerMapping>,
     pub version: u64, // 版本号
     pub updated_at_ms: i64,
 }
@@ -311,8 +326,8 @@ pub struct ContainerRecord {
     pub updated_at_ms: i64,
 }
 
-impl From<super::nri_mapping::ContainerMapping> for ContainerRecord {
-    fn from(c: super::nri_mapping::ContainerMapping) -> Self {
+impl From<super::nri_mapping_v2::ContainerMapping> for ContainerRecord {
+    fn from(c: super::nri_mapping_v2::ContainerMapping) -> Self {
         Self {
             container_id: c.container_id,
             pod_uid: c.pod_uid,
@@ -332,8 +347,8 @@ pub struct CgroupRecord {
     pub updated_at_ms: i64,
 }
 
-impl From<super::nri_mapping::CgroupMapping> for CgroupRecord {
-    fn from(cg: super::nri_mapping::CgroupMapping) -> Self {
+impl From<super::nri_mapping_v2::CgroupMapping> for CgroupRecord {
+    fn from(cg: super::nri_mapping_v2::CgroupMapping) -> Self {
         Self {
             cgroup_id: cg.cgroup_id,
             pod_uid: cg.pod_uid,
@@ -352,8 +367,8 @@ pub struct PidRecord {
     pub updated_at_ms: i64,
 }
 
-impl From<super::nri_mapping::PidMapping> for PidRecord {
-    fn from(p: super::nri_mapping::PidMapping) -> Self {
+impl From<super::nri_mapping_v2::PidMapping> for PidRecord {
+    fn from(p: super::nri_mapping_v2::PidMapping) -> Self {
         Self {
             pid: p.pid,
             cgroup_id: p.cgroup_id,
@@ -362,9 +377,21 @@ impl From<super::nri_mapping::PidMapping> for PidRecord {
     }
 }
 
+/// 当前持久化 schema 版本
+pub const PERSIST_SCHEMA_VERSION: u32 = 1;
+
+/// 数据最大有效期（默认24小时，超过此时间的快照视为过期）
+pub const MAX_SNAPSHOT_AGE_MS: i64 = 24 * 60 * 60 * 1000;
+
 /// 持久化元数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistMetadata {
+    /// Schema 版本号，用于兼容性检查
+    #[serde(default)]
+    pub schema_version: u32,
+    /// 数据 checksum (CRC32 of all record hashes)
+    #[serde(default)]
+    pub checksum: Option<u32>,
     pub last_snapshot_ms: i64,
     pub pod_count: usize,
     pub container_count: usize,
@@ -453,7 +480,107 @@ pub fn restore_from_persist(
     let cgroups = store.load_all_cgroups()?;
     let pids = store.load_all_pids()?;
     
+    // 验证数据完整性（checksum校验）
+    if let Some(ref metadata) = meta {
+        if let Some(stored_checksum) = metadata.checksum {
+            let calculated_checksum = calculate_data_checksum(&pods, &containers, &cgroups, &pids)?;
+            if calculated_checksum != stored_checksum {
+                tracing::warn!(
+                    "[Persist] Checksum validation failed: stored={}, calculated={}", 
+                    stored_checksum, calculated_checksum
+                );
+                
+                // 发出告警
+                emit_persistence_alert(
+                    "checksum_mismatch",
+                    &format!("Persistence data corruption detected: checksum mismatch (stored: {}, calculated: {})", 
+                             stored_checksum, calculated_checksum)
+                );
+                
+                // 继续恢复但记录警告
+                return Ok((build_table_from_data(pods, containers, cgroups, pids), Some(metadata.clone())));
+            }
+        }
+        
+        // 检查数据年龄
+        let now = chrono::Utc::now().timestamp_millis();
+        if now - metadata.last_snapshot_ms > MAX_SNAPSHOT_AGE_MS {
+            tracing::warn!(
+                "[Persist] Snapshot data is stale: age={}ms, max={}ms",
+                now - metadata.last_snapshot_ms,
+                MAX_SNAPSHOT_AGE_MS
+            );
+            
+            emit_persistence_alert(
+                "stale_data",
+                &format!("Persistence data is stale: {} hours old", 
+                         (now - metadata.last_snapshot_ms) / (60 * 60 * 1000))
+            );
+        }
+    }
+    
     // 构建新的映射表
+    let table = build_table_from_data(pods, containers, cgroups, pids);
+    
+    // 更新时间戳
+    if let Some(ref m) = meta {
+        table.last_update_ms.store(m.last_snapshot_ms, std::sync::atomic::Ordering::Release);
+    }
+    
+    tracing::info!(
+        "[NriPersist] Restored {} pods, {} containers, {} cgroups, {} pids from database",
+        table.pod_count(), table.container_count(), table.cgroup_count(), table.pid_count()
+    );
+    
+    // 关闭存储
+    store.close()?;
+    
+    Ok((table, meta))
+}
+
+/// 计算数据的 checksum
+fn calculate_data_checksum(
+    pods: &[PodInfoRecord],
+    containers: &[ContainerRecord],
+    cgroups: &[CgroupRecord],
+    pids: &[(u32, PidRecord)],
+) -> Result<u32, PersistError> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    
+    // 对所有记录进行哈希
+    for pod in pods {
+        pod.pod_uid.hash(&mut hasher);
+        pod.pod_name.hash(&mut hasher);
+        pod.namespace.hash(&mut hasher);
+    }
+    
+    for container in containers {
+        container.container_id.hash(&mut hasher);
+        container.pod_uid.hash(&mut hasher);
+    }
+    
+    for cgroup in cgroups {
+        cgroup.cgroup_id.hash(&mut hasher);
+    }
+    
+    for (pid, pid_record) in pids {
+        pid.hash(&mut hasher);
+        pid_record.pid.hash(&mut hasher);
+    }
+    
+    Ok(hasher.finish() as u32)
+}
+
+/// 构建映射表从数据
+fn build_table_from_data(
+    pods: Vec<PodInfoRecord>,
+    containers: Vec<ContainerRecord>,
+    cgroups: Vec<CgroupRecord>,
+    pids: Vec<(u32, PidRecord)>,
+) -> super::nri_mapping_v2::NriMappingTableV2 {
     let table = super::nri_mapping_v2::NriMappingTableV2::with_capacity(
         pods.len() * 2,
         containers.len() * 2,
@@ -465,7 +592,7 @@ pub fn restore_from_persist(
     for container in containers {
         table.container_map.insert(
             container.container_id.clone(),
-            super::nri_mapping::ContainerMapping {
+            super::nri_mapping_v2::ContainerMapping {
                 container_id: container.container_id,
                 pod_uid: container.pod_uid,
                 cgroup_ids: container.cgroup_ids,
@@ -477,7 +604,7 @@ pub fn restore_from_persist(
     for cgroup in cgroups {
         table.cgroup_map.insert(
             cgroup.cgroup_id.clone(),
-            super::nri_mapping::CgroupMapping {
+            super::nri_mapping_v2::CgroupMapping {
                 cgroup_id: cgroup.cgroup_id,
                 pod_uid: cgroup.pod_uid,
                 container_id: cgroup.container_id,
@@ -490,7 +617,7 @@ pub fn restore_from_persist(
     for (pid, pid_record) in pids {
         table.pid_map.insert(
             pid,
-            super::nri_mapping::PidMapping {
+            super::nri_mapping_v2::PidMapping {
                 pid,
                 cgroup_id: pid_record.cgroup_id,
             },
@@ -510,20 +637,28 @@ pub fn restore_from_persist(
         );
     }
     
-    // 更新时间戳
-    if let Some(ref m) = meta {
-        table.last_update_ms.store(m.last_snapshot_ms, std::sync::atomic::Ordering::Release);
-    }
+    table
+}
+
+/// 发出持久化告警
+fn emit_persistence_alert(alert_type: &str, message: &str) {
+    tracing::error!("[Persist Alert] {}: {}", alert_type, message);
     
-    tracing::info!(
-        "[NriPersist] Restored {} pods, {} containers, {} cgroups, {} pids from database",
-        table.pod_count(), table.container_count(), table.cgroup_count(), table.pid_count()
-    );
+    // 这里可以集成到外部告警系统
+    // 例如发送到 Prometheus、Slack、Email 等
+    // 目前先记录到日志
     
-    // 关闭存储
-    store.close()?;
-    
-    Ok((table, meta))
+    // TODO: 集成到配置的告警平台
+    // match &config.alert_platform {
+    //     Some(platform) => {
+    //         if let Err(e) = platform.send_alert(alert_type, message) {
+    //             tracing::error!("Failed to send alert: {}", e);
+    //         }
+    //     }
+    //     None => {
+    //         tracing::debug!("No alert platform configured, skipping alert");
+    //     }
+    // }
 }
 
 /// 启动后台快照任务

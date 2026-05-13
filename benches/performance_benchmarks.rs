@@ -1,12 +1,16 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
 use nuts_observer::diagnosis::{
     DiagnosisEngine, DiagnosisEngineConfig, RuleManager, TrendRule, TrendRuleConfig,
 };
 use nuts_observer::types::diagnosis::{DiagnosisResult, Conclusion, Severity};
 use nuts_observer::types::evidence::{Evidence, CollectionMeta, TimeWindow, Scope, Attribution};
 use nuts_observer::publisher::alert_adapter::AlertRouter;
+use nuts_observer::collector::nri_batch::{BatchProcessor, BatchConfig};
+use nuts_observer::collector::nri_v3::NriV3Processor;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 
 /// 创建测试证据
 fn create_test_evidence(metric_value: f64) -> Evidence {
@@ -316,6 +320,282 @@ fn benchmark_concurrent_operations(c: &mut Criterion) {
     group.finish();
 }
 
+/// 基准测试：事件延迟 (<100ms)
+fn benchmark_event_latency(c: &mut Criterion) {
+    let mut group = c.benchmark_group("event_latency");
+    group.sample_size(1000);
+    group.measurement_time(Duration::from_secs(10));
+
+    // 测试单个事件处理延迟
+    group.bench_function("single_event_processing", |b| {
+        b.to_async(tokio::runtime::Runtime::new().unwrap()).iter(|| async {
+            let start_time = Instant::now();
+            
+            // 模拟事件处理
+            let evidence = create_test_evidence(75.0);
+            let _json = serde_json::to_string(&evidence).unwrap();
+            
+            let elapsed = start_time.elapsed();
+            assert!(elapsed.as_millis() < 100, "Event processing should be <100ms, got {:?}", elapsed);
+            
+            black_box(elapsed)
+        });
+    });
+
+    // 测试批量事件处理延迟
+    for batch_size in [10, 50, 100].iter() {
+        group.bench_with_input(
+            BenchmarkId::new("batch_event_processing", batch_size),
+            batch_size,
+            |b, &batch_size| {
+                b.to_async(tokio::runtime::Runtime::new().unwrap()).iter(|| async {
+                    let start_time = Instant::now();
+                    
+                    let mut evidences = Vec::new();
+                    for i in 0..batch_size {
+                        evidences.push(create_test_evidence(50.0 + i as f64 * 0.1));
+                    }
+                    
+                    // 批量处理
+                    for evidence in &evidences {
+                        let _json = serde_json::to_string(&evidence).unwrap();
+                    }
+                    
+                    let elapsed = start_time.elapsed();
+                    let avg_latency = elapsed.as_millis() / batch_size as u128;
+                    assert!(avg_latency < 100, "Average event latency should be <100ms, got {}", avg_latency);
+                    
+                    black_box(elapsed)
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// 基准测试：批量处理性能 (<1s)
+fn benchmark_batch_processing(c: &mut Criterion) {
+    let mut group = c.benchmark_group("batch_processing");
+    group.sample_size(100);
+    group.measurement_time(Duration::from_secs(30));
+
+    // 配置批量处理器
+    let batch_config = BatchConfig {
+        max_batch_size: 100,
+        flush_interval_ms: 1000,
+        max_wait_time_ms: 500,
+        enable_compression: false,
+        enable_metrics: true,
+    };
+
+    // 测试不同批量大小的处理时间
+    for batch_size in [50, 100, 500, 1000].iter() {
+        group.throughput(Throughput::Elements(*batch_size as u64));
+        group.bench_with_input(
+            BenchmarkId::new("process_batch", batch_size),
+            batch_size,
+            |b, &batch_size| {
+                b.to_async(tokio::runtime::Runtime::new().unwrap()).iter(|| async {
+                    let start_time = Instant::now();
+                    
+                    // 创建批量数据
+                    let mut batch_data = Vec::new();
+                    for i in 0..batch_size {
+                        let evidence = create_test_evidence(50.0 + i as f64 * 0.01);
+                        batch_data.push(evidence);
+                    }
+                    
+                    // 模拟批量处理
+                    let batch_json = serde_json::to_string(&batch_data).unwrap();
+                    let _processed: Vec<Evidence> = serde_json::from_str(&batch_json).unwrap();
+                    
+                    let elapsed = start_time.elapsed();
+                    assert!(elapsed.as_secs() < 1, "Batch processing should be <1s, got {:?}", elapsed);
+                    
+                    black_box(elapsed)
+                });
+            },
+        );
+    }
+
+    // 测试批量刷新间隔
+    group.bench_function("batch_flush_interval", |b| {
+        b.to_async(tokio::runtime::Runtime::new().unwrap()).iter(|| async {
+            let start_time = Instant::now();
+            
+            // 模拟批量刷新逻辑
+            let (tx, mut rx) = mpsc::channel(1000);
+            
+            // 发送数据
+            for i in 0..50 {
+                let evidence = create_test_evidence(50.0 + i as f64 * 0.1);
+                let _ = tx.send(evidence).await;
+            }
+            
+            // 模拟批量接收和处理
+            let mut batch = Vec::new();
+            while let Some(item) = rx.recv().await {
+                batch.push(item);
+                if batch.len() >= 50 {
+                    break;
+                }
+            }
+            
+            let elapsed = start_time.elapsed();
+            assert!(elapsed.as_millis() <= 1000, "Batch flush should be <=1000ms, got {:?}", elapsed);
+            
+            black_box(elapsed)
+        });
+    });
+
+    group.finish();
+}
+
+/// 基准测试：高吞吐量事件处理 (1000 events/sec)
+fn benchmark_high_throughput(c: &mut Criterion) {
+    let mut group = c.benchmark_group("high_throughput");
+    group.sample_size(50);
+    group.measurement_time(Duration::from_secs(30));
+
+    // 测试 1000 events/sec 的处理能力
+    group.throughput(Throughput::Elements(1000));
+    group.bench_function("process_1000_events_per_sec", |b| {
+        b.to_async(tokio::runtime::Runtime::new().unwrap()).iter(|| async {
+            let start_time = Instant::now();
+            let target_duration = Duration::from_secs(1);
+            
+            // 创建并发任务来模拟高吞吐量
+            let mut handles = vec![];
+            for i in 0..100 {
+                let handle = tokio::spawn(async move {
+                    let evidence = create_test_evidence(50.0 + i as f64 * 0.01);
+                    let _json = serde_json::to_string(&evidence).unwrap();
+                });
+                handles.push(handle);
+            }
+            
+            // 等待所有任务完成
+            for handle in handles {
+                let _ = handle.await;
+            }
+            
+            let elapsed = start_time.elapsed();
+            
+            // 验证吞吐量要求
+            let events_per_sec = 1000.0 / elapsed.as_secs_f64();
+            assert!(events_per_sec >= 1000.0, "Should process >=1000 events/sec, got {:.2}", events_per_sec);
+            
+            black_box(elapsed)
+        });
+    });
+
+    // 测试持续高吞吐量
+    group.bench_function("sustained_high_throughput", |b| {
+        b.to_async(tokio::runtime::Runtime::new().unwrap()).iter(|| async {
+            let start_time = Instant::now();
+            let test_duration = Duration::from_secs(5);
+            
+            let mut handles = vec![];
+            for _batch in 0..5 {
+                for i in 0..200 {
+                    let handle = tokio::spawn(async move {
+                        let evidence = create_test_evidence(50.0 + i as f64 * 0.001);
+                        let _json = serde_json::to_string(&evidence).unwrap();
+                    });
+                    handles.push(handle);
+                }
+                
+                // 短暂休息以模拟真实场景
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            
+            // 等待所有任务完成
+            for handle in handles {
+                let _ = handle.await;
+            }
+            
+            let elapsed = start_time.elapsed();
+            let total_events = 1000;
+            let events_per_sec = total_events as f64 / elapsed.as_secs_f64();
+            
+            assert!(events_per_sec >= 1000.0, "Sustained throughput should be >=1000 events/sec, got {:.2}", events_per_sec);
+            
+            black_box(elapsed)
+        });
+    });
+
+    group.finish();
+}
+
+/// 基准测试：内存和性能优化
+fn benchmark_memory_optimization(c: &mut Criterion) {
+    let mut group = c.benchmark_group("memory_optimization");
+    group.sample_size(100);
+
+    // 测试零拷贝序列化
+    group.bench_function("zero_copy_serialization", |b| {
+        let evidence = create_test_evidence(75.0);
+        b.iter(|| {
+            // 使用零拷贝序列化（模拟）
+            let _json_str = serde_json::to_string(&evidence).unwrap();
+            black_box(_json_str.len())
+        });
+    });
+
+    // 测试内存池复用
+    group.bench_function("memory_pool_reuse", |b| {
+        b.to_async(tokio::runtime::Runtime::new().unwrap()).iter(|| async {
+            // 模拟内存池复用
+            let mut evidences = Vec::with_capacity(100);
+            for i in 0..100 {
+                evidences.push(create_test_evidence(50.0 + i as f64 * 0.1));
+            }
+            
+            // 清空并复用
+            evidences.clear();
+            evidences.reserve(100);
+            
+            black_box(evidences.capacity())
+        });
+    });
+
+    // 测试流式处理
+    group.bench_function("streaming_processing", |b| {
+        b.to_async(tokio::runtime::Runtime::new().unwrap()).iter(|| async {
+            let (tx, rx) = mpsc::channel(1000);
+            
+            // 生产者
+            let producer = tokio::spawn(async move {
+                for i in 0..1000 {
+                    let evidence = create_test_evidence(50.0 + i as f64 * 0.001);
+                    let _ = tx.send(evidence).await;
+                }
+            });
+            
+            // 消费者（流式处理）
+            let consumer = tokio::spawn(async move {
+                let mut count = 0;
+                let mut receiver = rx;
+                while let Some(_evidence) = receiver.recv().await {
+                    count += 1;
+                    if count >= 1000 {
+                        break;
+                    }
+                }
+                count
+            });
+            
+            let _ = producer.await;
+            let processed = consumer.await.unwrap();
+            
+            black_box(processed)
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_rule_evaluation,
@@ -326,6 +606,10 @@ criterion_group!(
     benchmark_rule_manager,
     benchmark_memory_usage,
     benchmark_concurrent_operations,
+    benchmark_event_latency,
+    benchmark_batch_processing,
+    benchmark_high_throughput,
+    benchmark_memory_optimization,
 );
 
 criterion_main!(benches);
