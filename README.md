@@ -263,6 +263,20 @@ collector:
 
 ## 📖 使用指南
 
+### 用户指南
+- **快速开始**: [docs/USER_GUIDE.md](docs/USER_GUIDE.md) - 完整的用户使用指南
+- **常见问题**: [docs/FAQ.md](docs/FAQ.md) - 常见问题解答
+- **最佳实践**: [docs/BEST_PRACTICES.md](docs/BEST_PRACTICES.md) - 生产环境最佳实践
+
+### 技术文档
+- **项目概述**: [docs/01_overview.md](docs/01_overview.md)
+- **数据模式**: [docs/02_schemas.md](docs/02_schemas.md)
+- **NRI映射**: [docs/03_nri_mapping_spec.md](docs/03_nri_mapping_spec.md)
+- **字段映射**: [docs/08_collector_bpftrace_to_fields.md](docs/08_collector_bpftrace_to_fields.md)
+- **案例库**: [docs/10_case_library_guide.md](docs/10_case_library_guide.md)
+- **API契约**: [docs/05_api_cli_contract.md](docs/05_api_cli_contract.md)
+- **排障指南**: [docs/PRODUCTION_DEPLOYMENT_OPERATIONS_MANUAL.md](docs/PRODUCTION_DEPLOYMENT_OPERATIONS_MANUAL.md)
+
 ### HTTP API
 
 #### 触发诊断

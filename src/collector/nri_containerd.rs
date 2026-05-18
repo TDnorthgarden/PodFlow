@@ -905,47 +905,41 @@ impl Plugin for ContainerdNriPlugin {
             req.containers.len()
         );
 
-        // 处理所有现有的 Pod 和 Container
+        // 按 pod_uid 分组容器
+        let mut pod_containers: std::collections::HashMap<String, Vec<crate::collector::nri_mapping_v2::NriContainerInfo>> =
+            std::collections::HashMap::new();
+        for container in &req.containers {
+            let container_info = self.convert_container(container);
+            pod_containers
+                .entry(container.pod_uid.clone())
+                .or_default()
+                .push(container_info);
+        }
+
+        // 每个 Pod 发送一次包含所有容器的事件
         for pod in &req.pods {
+            let containers = pod_containers.remove(&pod.pod_uid).unwrap_or_default();
             let pod_event = NriPodEvent {
                 pod_uid: pod.pod_uid.clone(),
                 pod_name: pod.name.clone(),
                 namespace: pod.namespace.clone(),
-                containers: vec![],
+                containers,
             };
-            let event = NriEvent::AddOrUpdate(pod_event);
-
-            if let Err(e) = self.event_tx.try_send(event) {
+            if let Err(e) = self.event_tx.try_send(NriEvent::AddOrUpdate(pod_event)) {
                 warn!("[ContainerdNri] Failed to send sync pod event: {}", e);
             }
         }
 
-        for container in &req.containers {
-            // 查找对应的 Pod
-            let pod = req.pods.iter().find(|p| p.pod_uid == container.pod_uid);
-
-            let event = if let Some(pod) = pod {
-                let container_info = self.convert_container(container);
-                let pod_event = NriPodEvent {
-                    pod_uid: pod.pod_uid.clone(),
-                    pod_name: pod.name.clone(),
-                    namespace: pod.namespace.clone(),
-                    containers: vec![container_info],
-                };
-                NriEvent::AddOrUpdate(pod_event)
-            } else {
-                let container_info = self.convert_container(container);
-                let pod_event = NriPodEvent {
-                    pod_uid: container.pod_uid.clone(),
-                    pod_name: "".to_string(),
-                    namespace: "".to_string(),
-                    containers: vec![container_info],
-                };
-                NriEvent::AddOrUpdate(pod_event)
+        // 处理没有对应 Pod 的容器（孤儿容器）
+        for (pod_uid, containers) in pod_containers {
+            let pod_event = NriPodEvent {
+                pod_uid: pod_uid.clone(),
+                pod_name: "".to_string(),
+                namespace: "".to_string(),
+                containers,
             };
-
-            if let Err(e) = self.event_tx.try_send(event) {
-                warn!("[ContainerdNri] Failed to send sync container event: {}", e);
+            if let Err(e) = self.event_tx.try_send(NriEvent::AddOrUpdate(pod_event)) {
+                warn!("[ContainerdNri] Failed to send sync orphan container event: {}", e);
             }
         }
 

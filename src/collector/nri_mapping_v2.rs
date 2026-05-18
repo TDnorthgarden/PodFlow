@@ -8,8 +8,6 @@
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Arc, RwLock};
-use std::collections::HashMap;
 
 /// Pod 信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +16,9 @@ pub struct PodInfo {
     pub pod_name: String,
     pub namespace: String,
     pub containers: Vec<ContainerMapping>,
+    /// 最后更新时间（毫秒时间戳），用于过期检测
+    #[serde(default)]
+    pub updated_at_ms: i64,
 }
 
 /// 容器映射信息
@@ -224,12 +225,19 @@ impl NriMappingTableV2 {
         }
     }
 
-    /// 处理 Add/Update 事件（V2 无锁实现）
+    /// 处理 Add/Update 事件（V2 无锁实现，支持容器合并）
     fn handle_add_or_update(&self, event: NriPodEvent) -> Result<(), AttributionError> {
         let now = chrono::Utc::now().timestamp_millis();
 
-        // 构建 PodInfo
-        let containers: Vec<ContainerMapping> = event
+        // 构建事件中的容器集合（用于合并过滤）
+        let event_container_ids: std::collections::HashSet<String> = event
+            .containers
+            .iter()
+            .map(|c| c.container_id.clone())
+            .collect();
+
+        // 构建事件容器映射
+        let event_container_mappings: Vec<ContainerMapping> = event
             .containers
             .iter()
             .map(|c| ContainerMapping {
@@ -239,15 +247,40 @@ impl NriMappingTableV2 {
             })
             .collect();
 
-        let pod_info = PodInfo {
-            pod_uid: event.pod_uid.clone(),
-            pod_name: event.pod_name.clone(),
-            namespace: event.namespace.clone(),
-            containers: containers.clone(),
-        };
+        // 合并逻辑：使用 entry() API 实现原子读-改-写，
+        // 避免 get+insert 的竞态条件（多 worker 并发处理同一 Pod 事件）
+        use dashmap::mapref::entry::Entry;
 
-        // 更新 pod_map（无锁并发插入）
-        self.pod_map.insert(event.pod_uid.clone(), pod_info);
+        match self.pod_map.entry(event.pod_uid.clone()) {
+            Entry::Occupied(mut occupied) => {
+                let existing = occupied.get_mut();
+                let before_count = existing.containers.len();
+                // 保留已有容器中不在事件里的，用事件容器替换/新增
+                existing.containers.retain(|c| !event_container_ids.contains(&c.container_id));
+                existing.containers.extend(event_container_mappings.iter().cloned());
+                existing.pod_name = event.pod_name.clone();
+                existing.namespace = event.namespace.clone();
+                existing.updated_at_ms = now;
+                tracing::debug!(
+                    "[NriMapping] Merged pod {}: {} existing + {} event = {} total containers",
+                    event.pod_uid, before_count, event.containers.len(), existing.containers.len()
+                );
+            }
+            Entry::Vacant(vacant) => {
+                let pod_info = PodInfo {
+                    pod_uid: event.pod_uid.clone(),
+                    pod_name: event.pod_name.clone(),
+                    namespace: event.namespace.clone(),
+                    containers: event_container_mappings.clone(),
+                    updated_at_ms: now,
+                };
+                tracing::debug!(
+                    "[NriMapping] New pod {}: {} containers",
+                    event.pod_uid, event.containers.len()
+                );
+                vacant.insert(pod_info);
+            }
+        }
 
         // 更新 container_map 和 cgroup_map（并发安全）
         for container in &event.containers {
@@ -293,7 +326,7 @@ impl NriMappingTableV2 {
     }
 
     /// 处理 Delete 事件（V2 无锁实现）
-    fn handle_delete(&self, pod_uid: &str) -> Result<(), AttributionError> {
+    pub fn handle_delete(&self, pod_uid: &str) -> Result<(), AttributionError> {
         // 获取 Pod 信息以清理关联映射
         if let Some((_, pod)) = self.pod_map.remove(pod_uid) {
             // 清理 container_map, cgroup_map, pid_map
@@ -519,6 +552,12 @@ impl NriMappingTableV2 {
                 pod.pod_name == name && pod.namespace == namespace
             })
             .map(|entry| entry.value().clone())
+    }
+
+    /// 通过 Pod 名称和命名空间查询 Pod UID
+    pub fn get_pod_uid_by_name(&self, name: &str, namespace: &str) -> Option<String> {
+        self.find_pod_by_name_namespace(name, namespace)
+            .map(|pod| pod.pod_uid)
     }
 
     /// 获取所有 Pod 列表

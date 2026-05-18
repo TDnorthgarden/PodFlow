@@ -8,4 +8,5 @@ pub mod health;
 pub mod rule_management;
 pub mod diagnosis;
 pub mod case;
+pub mod auth;
 

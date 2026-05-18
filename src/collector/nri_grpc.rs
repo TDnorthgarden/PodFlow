@@ -207,7 +207,7 @@ impl NriGrpcService {
                     let containers: Vec<NriContainerInfo> = pod
                         .containers
                         .iter()
-                        .map(|c| super::nri_mapping::NriContainerInfo {
+                        .map(|c| super::nri_mapping_v2::NriContainerInfo {
                             container_id: c.container_id.clone(),
                             cgroup_ids: c.cgroup_ids.clone(),
                             pids: vec![], // 从 container 提取或使用默认值
@@ -264,7 +264,7 @@ impl NriGrpcService {
                 existing.cgroup_ids = extract_cgroup_ids(&container.linux);
             } else {
                 // 添加新容器
-                pod.containers.push(super::nri_mapping::ContainerMapping {
+                pod.containers.push(super::nri_mapping_v2::ContainerMapping {
                     container_id: container.container_id.clone(),
                     pod_uid: pod_uid.to_string(),
                     cgroup_ids: extract_cgroup_ids(&container.linux),
@@ -275,7 +275,7 @@ impl NriGrpcService {
                 pod_uid: pod.pod_uid,
                 pod_name: pod.pod_name,
                 namespace: pod.namespace,
-                containers: pod.containers.iter().map(|c| super::nri_mapping::NriContainerInfo {
+                containers: pod.containers.iter().map(|c| super::nri_mapping_v2::NriContainerInfo {
                     container_id: c.container_id.clone(),
                     cgroup_ids: c.cgroup_ids.clone(),
                     pids: vec![],
@@ -305,7 +305,7 @@ impl NriGrpcService {
                     pod_uid: pod.pod_uid,
                     pod_name: pod.pod_name,
                     namespace: pod.namespace,
-                    containers: pod.containers.iter().map(|c| super::nri_mapping::NriContainerInfo {
+                    containers: pod.containers.iter().map(|c| super::nri_mapping_v2::NriContainerInfo {
                         container_id: c.container_id.clone(),
                         cgroup_ids: c.cgroup_ids.clone(),
                         pids: vec![],

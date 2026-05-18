@@ -12,9 +12,7 @@ pub use performance::{
     PerformanceMetrics, PerformanceBaseline, PerformanceRating, PerformanceMonitor,
     PerformanceTimer, PerformanceReport, OperationSummary,
 };
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::collections::HashMap;
 use dashmap::DashMap;
 
 /// 统一指标收集器

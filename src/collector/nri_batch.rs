@@ -39,7 +39,7 @@ impl Default for BatchProcessorConfig {
             batch_size: 100,
             max_buffer_ms: 100,      // 100ms 最大延迟
             max_queue_depth: 10000,  // 1万事件背压
-            worker_threads: 2,
+            worker_threads: 4,       // 4 个工作线程
             enable_priority: true,
             delete_priority_boost: 10, // DELETE 事件优先级+10
         }
@@ -209,6 +209,7 @@ impl NriBatchProcessor {
             .await
             .map_err(|_| BatchError::ChannelClosed)?;
 
+        tracing::debug!("[NriBatch] Event submitted, seq={}", seq);
         Ok(())
     }
 
@@ -416,6 +417,7 @@ async fn flush_buffer(
         match version_mgr.try_update(pod_uid, version) {
             Ok(true) => {
                 // 版本检查通过
+                tracing::debug!("[NriBatch] Worker {} processing event for pod {}", worker_id, pod_uid);
                 if let Err(e) = table.update_from_nri(event) {
                     tracing::error!(
                         "[NriBatch] Worker {} failed to update table: {:?}",

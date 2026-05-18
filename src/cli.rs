@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 // Import real-time watch mode
 use crate::collector::watch_mode::{WatchConfig, start_real_time_watch};
-use crate::collector::nri_v3::{NriV3, NriV3Config, create_nri_v3};
+use crate::collector::nri_v3::create_nri_v3;
 use crate::collector::completion::generate_completion_script;
 
 /// Global flag controlling ANSI color output
@@ -507,7 +507,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Watch {
             pod_uid,
             namespace,
-            pod_name,
+            pod_name: _,
             evidence_types: _,
             metrics: _,
             window_secs: _,
@@ -688,6 +688,7 @@ fn print_evidence_detail(result: &serde_json::Value) {
 }
 
 /// ANSI 颜色转义码辅助函数
+#[allow(dead_code)]
 mod ansi {
     pub fn cyan(s: &str) -> String { format!("\x1B[36m{}\x1B[0m", s) }
     pub fn green(s: &str) -> String { format!("\x1B[32m{}\x1B[0m", s) }
@@ -731,6 +732,7 @@ async fn run_real_time_watch_mode(
 }
 
 /// 运行 Watch 模式（使用 ANSI 颜色 + 进度条）
+#[allow(dead_code)]
 async fn run_watch_mode(
     server: &str,
     client: &reqwest::Client,
@@ -850,6 +852,7 @@ async fn run_watch_mode(
 }
 
 /// 打印增强的 Watch 模式输出（使用 ANSI 颜色 + 进度条）
+#[allow(dead_code)]
 fn print_enhanced_output(result: &serde_json::Value, timestamp: &str, _detailed: bool, _evidence_types_str: &str) {
     use ansi::*;
     use std::collections::hash_map::DefaultHasher;
@@ -1230,6 +1233,7 @@ fn print_enhanced_output(result: &serde_json::Value, timestamp: &str, _detailed:
 
 /// 打印Evidence结构化详情（用于--detailed模式）
 /// 支持从API返回的evidence数据中格式化展示
+#[allow(dead_code)]
 fn print_evidence_details(evidence: &serde_json::Value) {
     use ansi::*;
     
@@ -1800,24 +1804,6 @@ async fn handle_config_command(
             });
             }
         }
-
-        ConfigCommands::Export { file } => {
-            let url = format!("{}/v1/rules/export", server);
-            let response = client.get(&url).send().await?;
-
-            if !response.status().is_success() {
-                return Err(CliError::ApiError {
-                    status: response.status().to_string(),
-                    message: "Failed to export rules".to_string(),
-                });
-            }
-
-            let yaml = response.text().await
-                .map_err(|e| CliError::NetworkError(format!("获取响应失败: {}", e)))?;
-            tokio::fs::write(&file, yaml).await
-                .map_err(|e| CliError::IoError(format!("写入文件失败: {}", e)))?;
-            println!("✅ 规则已导出到: {}", file);
-        }
     }
 
     Ok(())
@@ -1832,7 +1818,7 @@ async fn handle_case_command(subcommand: CaseCommands) -> Result<(), CliError> {
         Ok(()) => return Ok(()),
         Err(_) => {
             println!("⚠️  API连接失败，使用本地案例库");
-            let library = CaseLibrary::new();
+            let _library = CaseLibrary::new();
         }
     }
     
@@ -2114,18 +2100,17 @@ async fn try_case_api(subcommand: &CaseCommands) -> Result<(), CliError> {
                 
                 if let Some(matches_array) = matches["matches"].as_array() {
                     for case_match in matches_array {
-                        if let (title, confidence) = (
+                        let (title, confidence) = (
                             case_match["title"].as_str(),
                             case_match["confidence"].as_f64()
-                        ) {
-                            let bar_width = (confidence.unwrap_or(0.0) * 20.0) as usize;
-                            let bar: String = std::iter::repeat('█').take(bar_width).collect();
-                            println!("  {:<25} [{}] {:.1}%",
-                                title.unwrap_or("unknown").chars().take(23).collect::<String>(),
-                                bar,
-                                confidence.unwrap_or(0.0)
-                            );
-                        }
+                        );
+                        let bar_width = (confidence.unwrap_or(0.0) * 20.0) as usize;
+                        let bar: String = std::iter::repeat('█').take(bar_width).collect();
+                        println!("  {:<25} [{}] {:.1}%",
+                            title.unwrap_or("unknown").chars().take(23).collect::<String>(),
+                            bar,
+                            confidence.unwrap_or(0.0)
+                        );
                     }
                 }
                 Ok(())

@@ -4,9 +4,8 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
     response::Json,
-    routing::{get, Router},
+    routing::Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -103,7 +102,7 @@ pub async fn list_cases_handler(
 
     let total = cases.len();
     let start = (page - 1) * page_size;
-    let end = std::cmp::min(start + page_size, total);
+    let _end = std::cmp::min(start + page_size, total);
     let paginated_cases: Vec<crate::diagnosis::case_library::FaultCase> = cases.iter().skip(start).take(page_size).cloned().collect();
 
     let response = CaseListResponse {
@@ -167,7 +166,7 @@ pub async fn match_cases_handler(
 /// 导出案例库
 pub async fn export_cases_handler(
     State(library): State<Arc<CaseLibrary>>,
-    Query(params): Query<CaseQueryParams>,
+    Query(_params): Query<CaseQueryParams>,
 ) -> Result<String, NutsError> {
     match library.export_yaml() {
         Ok(yaml) => Ok(yaml),

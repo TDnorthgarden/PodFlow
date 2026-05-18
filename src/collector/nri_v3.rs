@@ -192,6 +192,55 @@ impl NriV3 {
         });
         handles.push(metrics_handle);
 
+        // 启动对账任务：定期清理过期 Pod 条目
+        let table_clone = Arc::clone(&table);
+        let version_mgr_clone = Arc::clone(&version_mgr);
+        let reconciliation_handle = tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            let stale_ttl_ms: i64 = 5 * 60 * 1000; // 5 分钟过期
+
+            loop {
+                ticker.tick().await;
+
+                let now = chrono::Utc::now().timestamp_millis();
+                let mut stale_pods = Vec::new();
+
+                // 检测过期 Pod
+                for entry in table_clone.pod_map.iter() {
+                    let pod = entry.value();
+                    if now - pod.updated_at_ms > stale_ttl_ms && pod.updated_at_ms > 0 {
+                        stale_pods.push(pod.pod_uid.clone());
+                    }
+                }
+
+                // 清理过期 Pod
+                for pod_uid in &stale_pods {
+                    if let Err(e) = table_clone.handle_delete(pod_uid) {
+                        tracing::warn!("[NriV3] Reconciliation: failed to delete stale pod {}: {}", pod_uid, e);
+                    } else {
+                        tracing::info!("[NriV3] Reconciliation: removed stale pod {}", pod_uid);
+                    }
+                }
+
+                // 清理版本管理器中的已删除 Pod 记录
+                let active_pods: Vec<String> = table_clone
+                    .pod_map
+                    .iter()
+                    .map(|e| e.key().clone())
+                    .collect();
+                version_mgr_clone.cleanup_deleted_pods(&active_pods);
+
+                if !stale_pods.is_empty() {
+                    tracing::info!(
+                        "[NriV3] Reconciliation completed: removed {} stale pods, {} active pods remain",
+                        stale_pods.len(),
+                        active_pods.len()
+                    );
+                }
+            }
+        });
+        handles.push(reconciliation_handle);
+
         tracing::info!("[NriV3] Initialization completed successfully");
 
         Ok(Self {
@@ -256,9 +305,22 @@ impl NriV3 {
     pub async fn submit_event(&self, event: NriEvent) -> Result<(), NriV3Error> {
         let start = std::time::Instant::now();
 
+        // DELETE 事件即时持久化（在提交到批处理器前记录 pod_uid）
+        let delete_pod_uid = match &event {
+            NriEvent::Delete { pod_uid } => Some(pod_uid.clone()),
+            _ => None,
+        };
+
         // 通过批量处理器提交
         self.batch_processor.submit(event).await
             .map_err(|e| NriV3Error::BatchError(e.to_string()))?;
+
+        // DELETE 事件即时从持久化存储中删除
+        if let (Some(pod_uid), Some(store)) = (delete_pod_uid, &self.persist_store) {
+            if let Err(e) = store.delete_pod(&pod_uid) {
+                tracing::warn!("[NriV3] Failed to delete pod {} from persistence: {}", pod_uid, e);
+            }
+        }
 
         // 记录指标
         let _duration_us = start.elapsed().as_micros() as u64;

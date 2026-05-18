@@ -127,7 +127,7 @@ async fn run_server() {
     // 启动 Containerd NRI Plugin 服务 (官方协议)
     #[cfg(feature = "nri-grpc")]
     {
-        let (nri_event_tx, mut nri_event_rx) = mpsc::channel::<NriEvent>(1000);
+        let (nri_event_tx, mut nri_event_rx) = mpsc::channel::<NriEvent>(5000);
 
         // 从环境变量加载 NRI 配置（带验证）
         let nri_cfg = config_read.nri.clone();
@@ -331,11 +331,20 @@ async fn run_server() {
         (app, None)
     };
 
-    // 获取服务器配置（注意：端口/绑定地址热重载需要重启服务）
+    // 添加 API Key 认证中间件
     let config_read = config.read().await;
+    let api_key_config = nuts_observer::api::auth::ApiKeyConfig {
+        api_key: config_read.server.api_key.clone(),
+        header_name: config_read.server.api_key_header.clone(),
+    };
     let bind_address = config_read.server.bind_address.clone();
     let port = config_read.server.port;
     drop(config_read);
+
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        api_key_config,
+        nuts_observer::api::auth::api_key_auth,
+    ));
     
     let addr = std::net::SocketAddr::from((
         parse_bind_address(&bind_address),

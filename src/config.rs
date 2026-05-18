@@ -278,6 +278,16 @@ pub struct ServerConfig {
     /// 监听端口
     #[serde(default = "default_port")]
     pub port: u16,
+    /// API Key 认证（None 表示不启用认证）
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// API Key 请求头名称
+    #[serde(default = "default_api_key_header")]
+    pub api_key_header: String,
+}
+
+fn default_api_key_header() -> String {
+    "X-API-Key".to_string()
 }
 
 fn default_bind_address() -> String {
@@ -293,6 +303,8 @@ impl Default for ServerConfig {
         Self {
             bind_address: default_bind_address(),
             port: default_port(),
+            api_key: None,
+            api_key_header: default_api_key_header(),
         }
     }
 }
