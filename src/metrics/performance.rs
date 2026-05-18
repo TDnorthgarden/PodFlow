@@ -2,7 +2,7 @@
 //!
 //! 提供性能监控、分析和优化建议
 
-use std::time::{Instant, Duration};
+use std::time::Instant;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
@@ -310,6 +310,7 @@ pub struct OperationSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_performance_metrics() {

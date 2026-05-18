@@ -16,11 +16,14 @@ pub struct NriPodEventRequest {
     pub event_type: String,
     /// Pod UID
     pub pod_uid: String,
-    /// Pod 名称
+    /// Pod 名称（DELETE 事件可选）
+    #[serde(default)]
     pub pod_name: String,
-    /// 命名空间
+    /// 命名空间（DELETE 事件可选）
+    #[serde(default)]
     pub namespace: String,
     /// 容器列表
+    #[serde(default)]
     pub containers: Vec<NriContainerRequest>,
     /// 节点名称（可选）
     #[serde(default)]

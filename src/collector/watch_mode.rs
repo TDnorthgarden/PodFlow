@@ -8,9 +8,7 @@ use std::time::Duration;
 use tokio::time::interval;
 use serde_json::json;
 
-use super::nri_mapping_v2::{NriMappingTableV2, AttributionInfo};
 use super::nri_v3::NriV3;
-use crate::metrics::UnifiedMetrics;
 
 /// Watch mode configuration
 #[derive(Debug, Clone)]

@@ -147,8 +147,8 @@ impl K8sE2ETestSuite {
             });
 
             pod_api.create(&PostParams::default(), &serde_json::from_value(pod)?).await?;
-            pod_names.push(pod_name);
             println!("✅ 创建测试 Pod: {}", pod_name);
+            pod_names.push(pod_name);
         }
 
         Ok(pod_names)
@@ -217,7 +217,7 @@ impl K8sE2ETestSuite {
                                 NriContainerInfo {
                                     container_id: container_id.clone(),
                                     cgroup_ids: vec![format!("cgroup-{}-{}", pod_name, i)],
-                                    pids: vec![10000 + i as i32], // 模拟 PID
+                                    pids: vec![10000 + i as u32], // 模拟 PID
                                 }
                             })
                         })
@@ -285,7 +285,7 @@ impl K8sE2ETestSuite {
                 .header("Content-Type", "application/json")
                 .body(axum::body::Body::from(request_body.to_string()))?;
 
-            let response = app.oneshot(request).await?;
+            let response = app.clone().oneshot(request).await?;
 
             if response.status() == 200 {
                 let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
@@ -360,20 +360,11 @@ impl K8sE2ETestSuite {
                 }
             }
 
-            // TODO: get_pod_uid_by_name 方法在 NriMappingTableV2 上不存在，
-            // 需要先通过其他方式获取 pod_uid 后再实现 NRI 删除事件模拟。
             // 模拟 NRI 删除事件
-            // if let Some(pod_uid) = self.nri_table.get_pod_uid_by_name(pod_name) {
-            //     let pod_event = NriPodEvent {
-            //         pod_uid: pod_uid.clone(),
-            //         pod_name: pod_name.to_string(),
-            //         namespace: self.config.namespace.clone(),
-            //         containers: vec![],
-            //     };
-            //
-            //     self.nri_table.update_from_nri(NriEvent::Remove(pod_event))?;
-            //     println!("✅ 从 NRI 映射表移除: {} ({})", pod_name, pod_uid);
-            // }
+            if let Some(pod_uid) = self.nri_table.get_pod_uid_by_name(pod_name, &self.config.namespace) {
+                self.nri_table.update_from_nri(NriEvent::Delete { pod_uid: pod_uid.clone() })?;
+                println!("✅ 从 NRI 映射表移除: {} ({})", pod_name, pod_uid);
+            }
         }
 
         Ok(())

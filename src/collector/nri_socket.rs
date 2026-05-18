@@ -363,7 +363,7 @@ impl std::error::Error for SocketError {
 pub fn start_event_processor(
     mut event_rx: mpsc::Receiver<NriEvent>,
     batch_tx: mpsc::Sender<NriEvent>,
-    table: Arc<NriMappingTableV2>,
+    _table: Arc<NriMappingTableV2>,
     version_mgr: Option<Arc<super::nri_version::EventVersionManager>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -412,7 +412,7 @@ pub async fn start_unix_socket_nri(
     let (event_tx, event_rx) = mpsc::channel(10000);
 
     // 创建版本管理器（可选）
-    let version_mgr = Arc::new(super::nri_version::EventVersionManager::new());
+    let _version_mgr = Arc::new(super::nri_version::EventVersionManager::new());
 
     // 启动 socket 适配器
     let adapter = NriUnixSocketAdapter::new(config, Arc::clone(&table), event_tx);

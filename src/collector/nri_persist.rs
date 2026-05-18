@@ -234,6 +234,34 @@ impl NriPersistStore {
             batch.insert(key.as_bytes(), value);
         }
 
+        // 清理已删除条目的旧键（幽灵条目修复）
+        let prefix_map: [(&str, bool); 3] = [
+            ("pod:", true),
+            ("container:", true),
+            ("cgroup:", true),
+        ];
+        for (prefix, _) in &prefix_map {
+            let mut stale_keys = Vec::new();
+            for result in self.db.scan_prefix(prefix.as_bytes()) {
+                if let Ok((key, _)) = result {
+                    let key_str = String::from_utf8_lossy(&key);
+                    let id = &key_str[prefix.len()..];
+                    let exists = match *prefix {
+                        "pod:" => pods.contains_key(id),
+                        "container:" => containers.contains_key(id),
+                        "cgroup:" => cgroups.contains_key(id),
+                        _ => false,
+                    };
+                    if !exists {
+                        stale_keys.push(key);
+                    }
+                }
+            }
+            for key in stale_keys {
+                batch.remove(key.as_ref());
+            }
+        }
+
         // 执行批量写入
         self.db.apply_batch(batch)?;
         self.db.flush()?;
@@ -519,6 +547,24 @@ pub fn restore_from_persist(
         }
     }
     
+    // 过滤过期条目（超过 24 小时的 Pod 不加载）
+    let now = chrono::Utc::now().timestamp_millis();
+    let stale_count_before = pods.len();
+    let pods: Vec<PodInfoRecord> = pods
+        .into_iter()
+        .filter(|p| {
+            if p.updated_at_ms > 0 && now - p.updated_at_ms > MAX_SNAPSHOT_AGE_MS {
+                false // 跳过过期条目
+            } else {
+                true
+            }
+        })
+        .collect();
+    let stale_skipped = stale_count_before - pods.len();
+    if stale_skipped > 0 {
+        tracing::info!("[Persist] Skipped {} stale pod entries during restore", stale_skipped);
+    }
+
     // 构建新的映射表
     let table = build_table_from_data(pods, containers, cgroups, pids);
     
@@ -633,6 +679,7 @@ fn build_table_from_data(
                 pod_name: pod.pod_name,
                 namespace: pod.namespace,
                 containers: pod.containers,
+                updated_at_ms: pod.updated_at_ms,
             },
         );
     }
