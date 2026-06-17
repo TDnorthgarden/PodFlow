@@ -267,6 +267,27 @@ pub fn create_default_statistical_rules() -> Vec<Box<dyn Rule>> {
             "CPU使用率波动异常，存在不稳定性",
             6,
         )),
+        // softirq 速率突变检测
+        Box::new(StatisticalRule::new(
+            "net_rx_softirq_rate_spike",
+            "softirq_contention",
+            "net_rx_softirq_rate",
+            AnomalyType::VarianceIncrease,
+            60,  // 1分钟窗口
+            3.0,  // 3-sigma
+            "NET_RX 软中断速率出现突发性峰值，可能存在瞬时流量冲击",
+            7,
+        )),
+        Box::new(StatisticalRule::new(
+            "softirq_latency_variance_high",
+            "softirq_contention",
+            "softirq_latency_p99_us",
+            AnomalyType::VarianceIncrease,
+            60,  // 1分钟窗口
+            2.0,  // 2-sigma
+            "软中断延迟波动异常，报文处理稳定性下降",
+            6,
+        )),
     ]
 }
 

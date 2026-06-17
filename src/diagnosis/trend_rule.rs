@@ -405,6 +405,38 @@ pub fn create_default_trend_rules() -> Vec<Box<dyn Rule>> {
             "CPU使用率加速增长，预测2分钟后将超过95%，存在CPU耗尽风险",
             9,
         )),
+        // 软中断速率持续增长趋势
+        Box::new(TrendRule::new(
+            "net_rx_softirq_growth_trend",
+            "softirq_contention",
+            "net_rx_softirq_rate",
+            TrendRuleConfig {
+                direction: TrendDirection::Increasing,
+                trend_type: TrendType::SustainedGrowth,
+                min_slope: 100.0,  // 每秒增长 100 次
+                forecast_window_secs: 120,  // 2分钟预测
+                forecast_threshold: 20000.0,  // 预测超过 20000/秒告警
+                window_size: 15,
+            },
+            "NET_RX 软中断速率持续增长，预测 2 分钟后将超过 20000/秒，可能触发软中断风暴",
+            8,
+        )),
+        // 软中断延迟加速增长
+        Box::new(TrendRule::new(
+            "softirq_latency_accelerating_trend",
+            "softirq_contention",
+            "softirq_latency_p99_us",
+            TrendRuleConfig {
+                direction: TrendDirection::Increasing,
+                trend_type: TrendType::AcceleratingGrowth,
+                min_slope: 50.0,  // 每秒增长 50us
+                forecast_window_secs: 180,
+                forecast_threshold: 3000.0,  // 预测超过 3ms 告警
+                window_size: 15,
+            },
+            "软中断处理延迟加速增长，预测 3 分钟后将超过 3ms，网络报文处理可能出现严重阻塞",
+            8,
+        )),
     ]
 }
 

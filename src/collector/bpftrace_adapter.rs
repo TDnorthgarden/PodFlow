@@ -35,6 +35,12 @@ pub enum BpftraceEventType {
     OomEvent,
     /// 聚合统计
     Stats,
+    /// 软中断事件
+    SoftirqLatency,
+    /// 软中断 ksoftirqd 唤醒
+    KsoftirqdWakeup,
+    /// 软中断聚合统计
+    SoftirqStats,
     /// 通用数据事件
     Data,
     /// 未知类型
@@ -54,6 +60,9 @@ impl From<&str> for BpftraceEventType {
             "syscall" => Self::Syscall,
             "fs_stall" => Self::FsStall,
             "oom_event" => Self::OomEvent,
+            "softirq_latency" => Self::SoftirqLatency,
+            "ksoftirqd_wakeup" => Self::KsoftirqdWakeup,
+            "softirq_stats" => Self::SoftirqStats,
             "stats" => Self::Stats,
             "data" => Self::Data,
             _ => Self::Unknown(s.to_string()),
@@ -371,7 +380,7 @@ impl BpftraceAdapter {
 
         // 跳过控制事件
         match event_type {
-            BpftraceEventType::Start | BpftraceEventType::End | BpftraceEventType::Stats => {
+            BpftraceEventType::Start | BpftraceEventType::End | BpftraceEventType::Stats | BpftraceEventType::SoftirqStats => {
                 return Ok(None);
             }
             _ => {}
@@ -602,6 +611,133 @@ pub fn collect_network(script_path: &str, duration_sec: u64) -> BpftraceCollecti
     adapter.collect()
 }
 
+/// 便捷函数：执行标准 softirq 采集
+pub fn collect_softirq(script_path: &str, duration_sec: u64) -> BpftraceCollectionResult {
+    let config = BpftraceCollectionConfig {
+        script_path: script_path.to_string(),
+        duration_sec,
+        field_mapping: FieldMappingConfig {
+            latency_field_aliases: vec!["latency_us".to_string(), "wait_us".to_string()],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut result = {
+        let adapter = BpftraceAdapter::new(config);
+        adapter.collect()
+    };
+    // 注入 softirq 特有指标
+    let softirq_metrics = aggregate_softirq_metrics(&result.events);
+    result.metrics.extend(softirq_metrics);
+    result
+}
+
+/// 聚合软中断特有指标
+///
+/// 从 raw events 中提取 softirq 维度指标：
+/// - net_rx_softirq_rate: NET_RX 软中断速率（次/秒）
+/// - net_tx_softirq_rate: NET_TX 软中断速率（次/秒）
+/// - softirq_latency_p99_us: 软中断处理延迟 P99
+/// - softirq_latency_max_us: 软中断处理延迟最大值
+/// - ksoftirqd_wakeup_rate: ksoftirqd 唤醒频率
+/// - cpu_imbalance_ratio: CPU 软中断分布不均衡度
+/// - skb_drop_count: skb 丢包总数
+fn aggregate_softirq_metrics(events: &[BpftraceRawEvent]) -> HashMap<String, f64> {
+    let mut metrics = HashMap::new();
+
+    if events.is_empty() {
+        return metrics;
+    }
+
+    // 收集延迟数据
+    let mut latencies: Vec<f64> = Vec::new();
+    let mut net_rx_count: u64 = 0;
+    let mut net_tx_count: u64 = 0;
+    let mut ksoftirqd_wakeups: u64 = 0;
+    let mut vec_counts: HashMap<String, u64> = HashMap::new();
+
+    // 计算时间跨度（用于计算速率）
+    let first_ts = events.first().and_then(|e| e.timestamp_ms).unwrap_or(0);
+    let last_ts = events.last().and_then(|e| e.timestamp_ms).unwrap_or(0);
+    let duration_secs = if last_ts > first_ts {
+        ((last_ts - first_ts) as f64 / 1000.0).max(1.0)
+    } else {
+        5.0 // 默认 5 秒
+    };
+
+    for event in events {
+        match event.event_type {
+            BpftraceEventType::SoftirqLatency => {
+                // 提取延迟
+                if let Some(serde_json::Value::Number(n)) = event.fields.get("latency_us") {
+                    if let Some(v) = n.as_f64() {
+                        latencies.push(v);
+                    }
+                }
+                // 按 vec 类型计数
+                if let Some(serde_json::Value::String(vec_name)) = event.fields.get("vec_name") {
+                    *vec_counts.entry(vec_name.clone()).or_insert(0) += 1;
+                }
+                if let Some(serde_json::Value::Number(v)) = event.fields.get("vec") {
+                    if let Some(vec_num) = v.as_u64() {
+                        match vec_num {
+                            3 => net_rx_count += 1,
+                            4 => net_tx_count += 1,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            BpftraceEventType::KsoftirqdWakeup => {
+                ksoftirqd_wakeups += 1;
+                // 也提取等待时间
+                if let Some(serde_json::Value::Number(n)) = event.fields.get("wait_us") {
+                    if let Some(v) = n.as_f64() {
+                        latencies.push(v);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // 软中断速率
+    metrics.insert("net_rx_softirq_rate".to_string(), net_rx_count as f64 / duration_secs);
+    metrics.insert("net_tx_softirq_rate".to_string(), net_tx_count as f64 / duration_secs);
+    metrics.insert("total_softirq_rate".to_string(), (net_rx_count + net_tx_count) as f64 / duration_secs);
+
+    // 软中断延迟统计
+    if !latencies.is_empty() {
+        latencies.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let sum: f64 = latencies.iter().sum();
+        let avg = sum / latencies.len() as f64;
+        let max = latencies.last().copied().unwrap_or(0.0);
+        let p99 = percentile(&latencies, 99.0);
+        let p95 = percentile(&latencies, 95.0);
+        let p50 = percentile(&latencies, 50.0);
+
+        metrics.insert("softirq_latency_avg_us".to_string(), avg);
+        metrics.insert("softirq_latency_max_us".to_string(), max);
+        metrics.insert("softirq_latency_p99_us".to_string(), p99);
+        metrics.insert("softirq_latency_p95_us".to_string(), p95);
+        metrics.insert("softirq_latency_p50_us".to_string(), p50);
+
+        // 超过 1ms 的延迟事件占比
+        let high_latency_count = latencies.iter().filter(|&&v| v > 1000.0).count();
+        metrics.insert("softirq_high_latency_ratio".to_string(), high_latency_count as f64 / latencies.len() as f64);
+    }
+
+    // ksoftirqd 活动指标
+    metrics.insert("ksoftirqd_wakeup_rate".to_string(), ksoftirqd_wakeups as f64 / duration_secs);
+
+    // 按 vec 类型的事件计数
+    for (vec_name, count) in &vec_counts {
+        metrics.insert(format!("softirq_vec_{}_count", vec_name.to_lowercase()), *count as f64);
+    }
+
+    metrics
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,6 +756,9 @@ mod tests {
     fn test_parse_event_type() {
         assert_eq!(BpftraceEventType::from("io_complete"), BpftraceEventType::IoComplete);
         assert_eq!(BpftraceEventType::from("tcp_connect"), BpftraceEventType::TcpConnect);
+        assert_eq!(BpftraceEventType::from("softirq_latency"), BpftraceEventType::SoftirqLatency);
+        assert_eq!(BpftraceEventType::from("ksoftirqd_wakeup"), BpftraceEventType::KsoftirqdWakeup);
+        assert_eq!(BpftraceEventType::from("softirq_stats"), BpftraceEventType::SoftirqStats);
         assert_eq!(BpftraceEventType::from("unknown"), BpftraceEventType::Unknown("unknown".to_string()));
     }
 
@@ -667,5 +806,84 @@ mod tests {
         assert_eq!(metrics.get("event_count"), Some(&2.0));
         assert_eq!(metrics.get("bytes_total"), Some(&12288.0));
         assert_eq!(metrics.get("latency_avg"), Some(&150.0));
+    }
+
+    #[test]
+    fn test_aggregate_softirq_metrics() {
+        let events = vec![
+            BpftraceRawEvent {
+                event_type: BpftraceEventType::SoftirqLatency,
+                timestamp_ms: Some(1000),
+                pid: Some(0),
+                comm: Some("swapper/0".to_string()),
+                fields: {
+                    let mut m = HashMap::new();
+                    m.insert("latency_us".to_string(), json!(500.0));
+                    m.insert("vec".to_string(), json!(3));
+                    m.insert("vec_name".to_string(), json!("NET_RX"));
+                    m.insert("cpu".to_string(), json!(0));
+                    m
+                },
+            },
+            BpftraceRawEvent {
+                event_type: BpftraceEventType::SoftirqLatency,
+                timestamp_ms: Some(2000),
+                pid: Some(0),
+                comm: Some("swapper/1".to_string()),
+                fields: {
+                    let mut m = HashMap::new();
+                    m.insert("latency_us".to_string(), json!(1500.0));
+                    m.insert("vec".to_string(), json!(3));
+                    m.insert("vec_name".to_string(), json!("NET_RX"));
+                    m.insert("cpu".to_string(), json!(1));
+                    m
+                },
+            },
+            BpftraceRawEvent {
+                event_type: BpftraceEventType::SoftirqLatency,
+                timestamp_ms: Some(3000),
+                pid: Some(0),
+                comm: Some("swapper/0".to_string()),
+                fields: {
+                    let mut m = HashMap::new();
+                    m.insert("latency_us".to_string(), json!(200.0));
+                    m.insert("vec".to_string(), json!(4));
+                    m.insert("vec_name".to_string(), json!("NET_TX"));
+                    m.insert("cpu".to_string(), json!(0));
+                    m
+                },
+            },
+            BpftraceRawEvent {
+                event_type: BpftraceEventType::KsoftirqdWakeup,
+                timestamp_ms: Some(4000),
+                pid: Some(45),
+                comm: Some("ksoftirqd/0".to_string()),
+                fields: {
+                    let mut m = HashMap::new();
+                    m.insert("wait_us".to_string(), json!(800.0));
+                    m
+                },
+            },
+        ];
+
+        let metrics = aggregate_softirq_metrics(&events);
+
+        // 速率检查 (时间跨度 3 秒)
+        assert!(metrics.get("net_rx_softirq_rate").unwrap() > &0.0);
+        assert!(metrics.get("net_tx_softirq_rate").unwrap() > &0.0);
+        assert!(metrics.get("total_softirq_rate").unwrap() > &0.0);
+
+        // 延迟统计
+        assert_eq!(metrics.get("softirq_latency_max_us"), Some(&1500.0));
+        // p99 线性插值，4 个元素 [200,500,800,1500] 的 p99 约 1479
+        assert!(metrics.get("softirq_latency_p99_us").unwrap() >= &1400.0);
+        assert!(metrics.get("softirq_high_latency_ratio").unwrap() > &0.0);
+
+        // ksoftirqd 指标
+        assert!(metrics.get("ksoftirqd_wakeup_rate").unwrap() > &0.0);
+
+        // vec 类型计数
+        assert_eq!(metrics.get("softirq_vec_net_rx_count"), Some(&2.0));
+        assert_eq!(metrics.get("softirq_vec_net_tx_count"), Some(&1.0));
     }
 }

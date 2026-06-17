@@ -309,6 +309,67 @@ impl RuleEngine {
             8,
         )));
 
+        // softirq_contention 规则
+        self.add_rule(Box::new(ThresholdRule::new(
+            "net_rx_softirq_rate_high",
+            "softirq_contention",
+            "net_rx_softirq_rate",
+            10000.0, // 每秒超过 10000 次 NET_RX 软中断
+            ThresholdOperator::GreaterThan,
+            "NET_RX 软中断速率超过 10000/秒，存在网络软中断风暴风险",
+            8,
+        )));
+
+        self.add_rule(Box::new(ThresholdRule::new(
+            "net_tx_softirq_rate_high",
+            "softirq_contention",
+            "net_tx_softirq_rate",
+            8000.0, // 每秒超过 8000 次 NET_TX 软中断
+            ThresholdOperator::GreaterThan,
+            "NET_TX 软中断速率超过 8000/秒，发送路径软中断压力过大",
+            7,
+        )));
+
+        self.add_rule(Box::new(ThresholdRule::new(
+            "softirq_latency_p99_high",
+            "softirq_contention",
+            "softirq_latency_p99_us",
+            1000.0, // P99 超过 1ms
+            ThresholdOperator::GreaterThan,
+            "软中断处理延迟 P99 超过 1ms，可能影响网络报文处理性能",
+            8,
+        )));
+
+        self.add_rule(Box::new(ThresholdRule::new(
+            "softirq_high_latency_ratio_high",
+            "softirq_contention",
+            "softirq_high_latency_ratio",
+            0.3, // 超过 30% 的软中断处理耗时 > 1ms
+            ThresholdOperator::GreaterThan,
+            "超过 30% 的软中断处理耗时超过 1ms，软中断处理能力严重不足",
+            9,
+        )));
+
+        self.add_rule(Box::new(ThresholdRule::new(
+            "ksoftirqd_wakeup_rate_high",
+            "softirq_contention",
+            "ksoftirqd_wakeup_rate",
+            100.0, // 每秒超过 100 次 ksoftirqd 唤醒
+            ThresholdOperator::GreaterThan,
+            "ksoftirqd 唤醒频率过高，软中断已卸载到内核线程处理，说明软中断压力超过处理能力",
+            9,
+        )));
+
+        self.add_rule(Box::new(ThresholdRule::new(
+            "cpu_imbalance_ratio_high",
+            "softirq_contention",
+            "cpu_imbalance_ratio",
+            3.0, // 最忙 CPU 的软中断次数超过平均值的 3 倍
+            ThresholdOperator::GreaterThan,
+            "软中断 CPU 分布严重不均，最忙 CPU 的软中断数超过平均值 3 倍，建议启用 RPS/RFS 分散流量",
+            7,
+        )));
+
         // 注册关联型规则
         for rule in create_default_correlation_rules() {
             self.add_rule(rule);
@@ -374,6 +435,36 @@ impl RuleEngine {
                         recommendations.push(recommendation);
                         conclusions.push(conclusion);
                     }
+                }
+            }
+
+            // 特殊处理：softirq_contention 事件检测
+            if evidence.evidence_type == "softirq_contention" {
+                for event in &evidence.events_topology {
+                    let (title, severity) = match event.event_type.as_str() {
+                        "softirq_latency_high" => ("软中断处理延迟异常，报文处理可能被阻塞", 8),
+                        "ksoftirqd_active" => ("ksoftirqd 内核线程活动频繁，软中断已卸载到进程上下文", 9),
+                        "softirq_imbalance" => ("软中断 CPU 分布严重不均，部分 CPU 过载", 7),
+                        _ => continue,
+                    };
+                    let conclusion = Conclusion {
+                        conclusion_id: uuid::Uuid::new_v4().to_string(),
+                        title: title.to_string(),
+                        severity: Some(severity),
+                        confidence: 0.85,
+                        evidence_strength: EvidenceStrength::Medium,
+                        details: Some(serde_json::json!({
+                            "event_type": event.event_type,
+                            "net_rx_softirq_rate": evidence.metric_summary.get("net_rx_softirq_rate"),
+                            "net_tx_softirq_rate": evidence.metric_summary.get("net_tx_softirq_rate"),
+                            "softirq_latency_p99_us": evidence.metric_summary.get("softirq_latency_p99_us"),
+                            "ksoftirqd_wakeup_rate": evidence.metric_summary.get("ksoftirqd_wakeup_rate"),
+                            "cpu_imbalance_ratio": evidence.metric_summary.get("cpu_imbalance_ratio"),
+                        })),
+                    };
+                    let recommendation = generate_recommendation(&conclusion, evidence);
+                    recommendations.push(recommendation);
+                    conclusions.push(conclusion);
                 }
             }
 
@@ -478,6 +569,17 @@ fn generate_recommendation(conclusion: &Conclusion, evidence: &Evidence) -> Reco
                 "检查 IO 密集型进程、调整 IO 权重或限制"
             } else {
                 "综合分析资源使用模式，优化容器资源配置"
+            }
+        }
+        "softirq_contention" => {
+            if conclusion.title.contains("RPS") || conclusion.title.contains("不均") {
+                "启用 RPS/RFS 将软中断分散到多个 CPU 核心，调整 /sys/class/net/<iface>/queues/rx-*/rps_cpus 配置"
+            } else if conclusion.title.contains("ksoftirqd") {
+                "检查网卡多队列配置是否启用，考虑增加网卡队列数或调整中断亲和性（smp_affinity）"
+            } else if conclusion.title.contains("延迟") {
+                "检查虚拟网口（veth）对端队列深度，考虑启用 XDP 将部分处理卸载到驱动层"
+            } else {
+                "检查网络吞吐量和软中断分布，考虑启用 RPS/RFS/XDP 优化"
             }
         }
         "oom_events" => {

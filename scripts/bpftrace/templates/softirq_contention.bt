@@ -1,0 +1,239 @@
+#!/usr/bin/env bpftrace
+/*
+ * Nuts-Observer Standard SoftIRQ Contention Probe
+ * 标准软中断争用采集脚本 - 符合 bpftrace_output_standard v0.1
+ *
+ * Evidence Type: softirq_contention
+ * Key Metrics: net_rx_softirq_rate, net_tx_softirq_rate, ksoftirqd_cpu_percent,
+ *              softirq_latency_us, veth_rx_queue_drops, rps_enabled
+ *
+ * 覆盖场景：
+ *  - K8s 虚拟网口（veth/calico/flannel）软中断风暴
+ *  - NET_RX/NET_TX 软中断分布不均导致单 CPU 瓶颈
+ *  - ksoftirqd 内核线程 CPU 占用过高
+ *  - 虚拟网口接收队列丢包
+ *
+ * 输出格式: JSON Lines
+ */
+
+#include <linux/netdevice.h>
+#include <linux/skbuff.h>
+
+BEGIN
+{
+    printf("{\"type\":\"start\",\"msg\":\"softirq_contention probe started\",\"probe_id\":\"softirq.contention\",\"version\":\"v0.1\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+
+    // 初始化每个 CPU 的软中断计数
+    @softirq_count_per_cpu = 0;
+    @softirq_latency_per_cpu = 0;
+    @softirq_entry_time = 0;
+}
+
+// ============================================================
+// 1. 软中断入口/出口跟踪 (irq:softirq_entry/exit)
+//    用于统计软中断发生频率和处理延迟
+// ============================================================
+
+tracepoint:irq:softirq_entry
+{
+    $vec = args->vec;
+    $cpu = cpu;
+    $ts_ns = nsecs;
+
+    // 记录软中断开始时间（按 CPU 和 vec 类型）
+    @entry_ts[$cpu, $vec] = $ts_ns;
+
+    // 按 vec 类型计数
+    if ($vec == 3) {  // NET_RX_SOFTIRQ
+        @net_rx_count = count();
+    } else if ($vec == 4) {  // NET_TX_SOFTIRQ
+        @net_tx_count = count();
+    }
+
+    @softirq_count_per_cpu[$cpu] = count();
+}
+
+tracepoint:irq:softirq_exit
+/@entry_ts[cpu, args->vec] != 0/
+{
+    $vec = args->vec;
+    $cpu = cpu;
+    $latency_ns = nsecs - @entry_ts[$cpu, $vec];
+    $latency_us = $latency_ns / 1000;
+    $ts_ms = nsecs / 1000000;
+
+    // 记录延迟分布
+    @softirq_latency_hist[$vec] = hist($latency_us);
+
+    // 按 vec 类型累计延迟
+    @softirq_latency_per_cpu[$cpu, $vec] = sum($latency_us);
+
+    // 超过 1ms 的软中断处理发出事件
+    if ($latency_us > 1000) {
+        $vec_name = "unknown";
+        if ($vec == 3) { $vec_name = "NET_RX"; }
+        else if ($vec == 4) { $vec_name = "NET_TX"; }
+        else if ($vec == 0) { $vec_name = "HI"; }
+        else if ($vec == 1) { $vec_name = "TIMER"; }
+        else if ($vec == 6) { $vec_name = "TASKLET"; }
+        else if ($vec == 7) { $vec_name = "SCHED"; }
+        else if ($vec == 9) { $vec_name = "RCU"; }
+
+        printf("{\"type\":\"softirq_latency\",\"cpu\":%d,\"vec\":%d,\"vec_name\":\"%s\",\"latency_us\":%llu,\"ts_ms\":%llu}\n",
+            $cpu, $vec, $vec_name, $latency_us, $ts_ms);
+    }
+
+    delete(@entry_ts[$cpu, $vec]);
+}
+
+// ============================================================
+// 2. ksoftirqd 内核线程调度跟踪
+//    当软中断被卸载到 ksoftirqd 时，说明软中断压力过大
+// ============================================================
+
+tracepoint:sched:sched_switch
+/comm == "ksoftirqd"/
+{
+    $prev_pid = args->prev_pid;
+    $prev_comm = args->prev_comm;
+    $next_pid = args->next_pid;
+    $next_comm = args->next_comm;
+    $ts_ms = nsecs / 1000000;
+
+    // ksoftirqd 被调度出去：记录调度出时间
+    if (strncmp($prev_comm, "ksoftirqd", 9) == 0) {
+        @ksoftirqd_out[$prev_pid] = nsecs;
+    }
+
+    // ksoftirqd 被调度进来：累计运行时间
+    if (strncmp($next_comm, "ksoftirqd", 9) == 0) {
+        @ksoftirqd_switch_in = count();
+    }
+}
+
+tracepoint:sched:sched_wakeup
+/@ksoftirqd_out[args->pid] != 0/
+{
+    $pid = args->pid;
+    $wait_us = (nsecs - @ksoftirqd_out[$pid]) / 1000;
+    $ts_ms = nsecs / 1000000;
+
+    printf("{\"type\":\"ksoftirqd_wakeup\",\"pid\":%d,\"wait_us\":%llu,\"ts_ms\":%llu}\n",
+        $pid, $wait_us, $ts_ms);
+
+    delete(@ksoftirqd_out[$pid]);
+}
+
+// ============================================================
+// 3. 虚拟网口（veth）接收队列丢包跟踪
+//    tracepoint:net:net_dev_queue 和 net_dev_xmit
+// ============================================================
+
+tracepoint:net:net_dev_queue
+{
+    $dev_name = str(args->name);
+    $ts_ms = nsecs / 1000000;
+
+    if (strncmp($dev_name, "veth", 4) == 0) {
+        @veth_tx_bytes[$dev_name] = sum(args->len);
+        @veth_tx_packets[$dev_name] = count();
+    }
+}
+
+tracepoint:skb:kfree_skb
+{
+    $ts_ms = nsecs / 1000000;
+    $reason = args->reason;
+
+    printf("{\"type\":\"skb_drop\",\"reason\":%d,\"ts_ms\":%llu}\n",
+        $reason, $ts_ms);
+
+    @skb_drops = count();
+}
+
+// ============================================================
+// 4. 网络设备统计（含 veth 丢包）
+//    通过 kprobe 读取 net_device 的 rx_dropped
+// ============================================================
+
+kprobe:netif_receive_skb
+{
+    $cpu = cpu;
+    $ts_ms = nsecs / 1000000;
+
+    @netif_receive[$cpu] = count();
+}
+
+kprobe:__netif_receive_skb_core
+{
+    $cpu = cpu;
+    @netif_receive_core[$cpu] = count();
+}
+
+// ============================================================
+// 5. 定期输出聚合统计 (每 5 秒)
+// ============================================================
+
+interval:s:5
+{
+    $ts_ms = nsecs / 1000000;
+    $net_rx_total = count(@net_rx_count);
+    $net_tx_total = count(@net_tx_count);
+    $net_rx_rate = $net_rx_total / 5.0;   // 每秒速率
+    $net_tx_rate = $net_tx_total / 5.0;
+    $skb_drop_total = count(@skb_drops);
+    $ksoftirqd_switches = count(@ksoftirqd_switch_in);
+
+    // 计算每个 CPU 的软中断数量
+    $max_cpu_count = 0;
+    $total_cpu_count = 0;
+    $cpu_count = 0;
+    // 收集所有 CPU 的计数用于计算分布
+    $max_cpu_count = max(@softirq_count_per_cpu);
+    $total_cpu_count = sum(@softirq_count_per_cpu);
+    $cpu_count = count(@softirq_count_per_cpu);
+
+    // 计算分布标准差（简单符号：max/avg 比值衡量不均匀度）
+    $avg_per_cpu = $cpu_count > 0 ? $total_cpu_count / $cpu_count : 0;
+    $imbalance_ratio = $avg_per_cpu > 0 ? $max_cpu_count / $avg_per_cpu : 0;
+
+    printf("{\"type\":\"stats\",\"ts_ms\":%llu,\"net_rx_rate\":%.2f,\"net_tx_rate\":%.2f,\"skb_drops\":%llu,\"ksoftirqd_switches\":%llu,\"cpu_imbalance_ratio\":%.2f,\"max_cpu_softirq_count\":%llu,\"total_softirq_count\":%llu,\"cpu_count\":%llu}\n",
+        $ts_ms, $net_rx_rate, $net_tx_rate, $skb_drop_total, $ksoftirqd_switches, $imbalance_ratio, $max_cpu_count, $total_cpu_count, $cpu_count);
+
+    // 重置计数器
+    zero(@net_rx_count);
+    zero(@net_tx_count);
+    zero(@skb_drops);
+    zero(@ksoftirqd_switch_in);
+    zero(@softirq_count_per_cpu);
+}
+
+// ============================================================
+// 6. 结束处理
+// ============================================================
+
+END
+{
+    printf("{\"type\":\"end\",\"msg\":\"softirq_contention probe stopped\",\"ts_ms\":%llu}\n",
+        nsecs / 1000000);
+
+    // 打印软中断延迟直方图（按 vec 类型）
+    print(@softirq_latency_hist);
+    // 打印网口发送字节统计
+    print(@veth_tx_bytes);
+    print(@veth_tx_packets);
+
+    clear(@entry_ts);
+    clear(@softirq_latency_hist);
+    clear(@softirq_latency_per_cpu);
+    clear(@net_rx_count);
+    clear(@net_tx_count);
+    clear(@softirq_count_per_cpu);
+    clear(@veth_tx_bytes);
+    clear(@veth_tx_packets);
+    clear(@skb_drops);
+    clear(@ksoftirqd_out);
+    clear(@netif_receive);
+    clear(@netif_receive_core);
+}

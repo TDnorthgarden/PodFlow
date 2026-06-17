@@ -366,6 +366,50 @@ pub fn create_default_correlation_rules() -> Vec<Box<dyn Rule>> {
             )
             .with_related_types(vec!["block_io", "cgroup_contention"]),
         ),
+        // 软中断风暴 + 网络延迟关联
+        Box::new(
+            CorrelationRule::new(
+                "softirq_storm_with_network_latency",
+                "softirq_contention",
+                CorrelationCondition::All(vec![
+                    CorrelationCondition::MetricThreshold {
+                        metric_name: "net_rx_softirq_rate".to_string(),
+                        threshold: 10000.0,
+                        operator: ComparisonOperator::GreaterThan,
+                    },
+                    CorrelationCondition::MetricThreshold {
+                        metric_name: "softirq_latency_p99_us".to_string(),
+                        threshold: 1000.0,
+                        operator: ComparisonOperator::GreaterThan,
+                    },
+                ]),
+                "软中断风暴伴随高延迟，虚拟网口报文处理能力严重不足，可能影响 Pod 网络性能",
+                9,
+            )
+            .with_related_types(vec!["softirq_contention", "network"]),
+        ),
+        // 软中断不均 + CPU 节流关联
+        Box::new(
+            CorrelationRule::new(
+                "softirq_imbalance_with_cpu_throttle",
+                "softirq_contention",
+                CorrelationCondition::All(vec![
+                    CorrelationCondition::MetricThreshold {
+                        metric_name: "cpu_imbalance_ratio".to_string(),
+                        threshold: 3.0,
+                        operator: ComparisonOperator::GreaterThan,
+                    },
+                    CorrelationCondition::MetricThreshold {
+                        metric_name: "ksoftirqd_wakeup_rate".to_string(),
+                        threshold: 100.0,
+                        operator: ComparisonOperator::GreaterThan,
+                    },
+                ]),
+                "软中断分布不均且 ksoftirqd 频繁唤醒，部分 CPU 核心软中断过载，需启用 RPS 分散处理",
+                8,
+            )
+            .with_related_types(vec!["softirq_contention", "cgroup_contention"]),
+        ),
     ]
 }
 
