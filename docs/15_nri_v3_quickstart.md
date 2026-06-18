@@ -2,7 +2,7 @@
 
 ## 概述
 
-本文档介绍如何在 5 分钟内启动使用 NRI V3 优化版本的 nuts-observer。
+本文档介绍如何在 5 分钟内启动使用 NRI V3 优化版本的 podflow。
 
 ## 前置条件
 
@@ -14,7 +14,7 @@
 ### 方式1：默认启动（推荐）
 
 ```bash
-cd /root/nuts
+cd /root/podflow
 cargo run
 ```
 
@@ -98,12 +98,12 @@ curl http://localhost:8080/metrics
 
 ## Unix Socket 通信
 
-默认 Unix Socket 路径：`/tmp/nuts_nri.sock`
+默认 Unix Socket 路径：`/tmp/podflow_nri.sock`
 
 ### 发送事件示例
 
 ```bash
-echo '{"pod_uid": "test-1", "pod_name": "test", "namespace": "default", "containers": [{"container_id": "c1", "cgroup_ids": [], "pids": []}]}' | nc -U /tmp/nuts_nri.sock
+echo '{"pod_uid": "test-1", "pod_name": "test", "namespace": "default", "containers": [{"container_id": "c1", "cgroup_ids": [], "pids": []}]}' | nc -U /tmp/podflow_nri.sock
 ```
 
 ## 性能对比
@@ -135,7 +135,7 @@ cargo run -- --port 8081
 ### 权限问题
 ```bash
 # Unix Socket 权限
-sudo chmod 777 /tmp/nuts_nri.sock
+sudo chmod 777 /tmp/podflow_nri.sock
 ```
 
 ## 下一步

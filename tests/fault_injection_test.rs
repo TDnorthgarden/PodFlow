@@ -15,10 +15,10 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 // 引入被测模块
-use nuts_observer::collector::nri_mapping_v2::{NriMappingTableV2, NriPodEvent, NriContainerInfo, NriEvent};
+use podflow::collector::nri_mapping_v2::{NriMappingTableV2, NriPodEvent, NriContainerInfo, NriEvent};
 #[cfg(feature = "nri-grpc")]
-use nuts_observer::collector::nri_grpc::NriGrpcClient;
-use nuts_observer::types::evidence::Evidence;
+use podflow::collector::nri_grpc::NriGrpcService;
+use podflow::types::evidence::Evidence;
 
 /// 故障类型枚举
 #[derive(Debug, Clone)]
@@ -81,7 +81,7 @@ pub struct FaultInjectionTestSuite {
     // TODO: NriSocketClient removed - needs replacement for socket fault injection
     // socket_client: Option<Arc<NriSocketClient>>,
     #[cfg(feature = "nri-grpc")]
-    grpc_client: Option<Arc<NriGrpcClient>>,
+    grpc_client: Option<Arc<NriGrpcService>>,
     active_faults: Arc<Mutex<Vec<FaultResult>>>,
     shutdown_signal: Arc<AtomicBool>,
 }
@@ -105,11 +105,11 @@ impl FaultInjectionTestSuite {
         // 创建模拟的 NRI Socket 客户端
         // 注意：这里使用模拟客户端，避免依赖真实的 containerd
         // TODO: NriSocketClient removed - needs replacement
-        // self.socket_client = Some(Arc::new(NriSocketClient::new("/tmp/nuts-test-socket")));
+        // self.socket_client = Some(Arc::new(NriSocketClient::new("/tmp/podflow-test-socket")));
         
         #[cfg(feature = "nri-grpc")]
         {
-            self.grpc_client = Some(Arc::new(NriGrpcClient::new("localhost:8080")));
+            self.grpc_client = None; // TODO: NriGrpcService requires NriMappingTableV2 + channels
         }
         // 添加一些测试 Pod 数据
         self.setup_test_pods().await?;
@@ -452,19 +452,19 @@ impl FaultInjectionTestSuite {
             evidence_id: "fault-test-evidence".to_string(),
             evidence_type: "cgroup_contention".to_string(),
             task_id: "fault-test-task".to_string(),
-            collection: nuts_observer::types::evidence::CollectionMeta {
+            collection: podflow::types::evidence::CollectionMeta {
                 collection_id: "fault-test-collection".to_string(),
                 collection_status: "success".to_string(),
                 probe_id: "fault-test-probe".to_string(),
                 errors: vec![],
             },
-            time_window: nuts_observer::types::evidence::TimeWindow {
+            time_window: podflow::types::evidence::TimeWindow {
                 start_time_ms: chrono::Utc::now().timestamp_millis() - 60000,
                 end_time_ms: chrono::Utc::now().timestamp_millis(),
                 collection_interval_ms: Some(1000),
             },
-            scope: nuts_observer::types::evidence::Scope {
-                pod: Some(nuts_observer::types::evidence::PodInfo {
+            scope: podflow::types::evidence::Scope {
+                pod: Some(podflow::types::evidence::PodInfo {
                     uid: Some("fault-test-pod".to_string()),
                     name: Some("fault-test-app".to_string()),
                     namespace: Some("fault-test-ns".to_string()),
@@ -479,7 +479,7 @@ impl FaultInjectionTestSuite {
             metric_summary,
             events_topology: vec![],
             top_calls: None,
-            attribution: nuts_observer::types::evidence::Attribution {
+            attribution: podflow::types::evidence::Attribution {
                 status: "success".to_string(),
                 confidence: Some(0.95),
                 source: Some("fault-test".to_string()),

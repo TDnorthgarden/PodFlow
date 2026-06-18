@@ -7,7 +7,7 @@ use crate::collector::nri_mapping_v2::NriMappingTableV2;
 use crate::diagnosis::engine::RuleEngine;
 use crate::publisher::ResultPublisher;
 use crate::types::evidence::{PodInfo, TimeWindow, Evidence};
-use crate::types::error::NutsError;
+use crate::types::error::PodflowError;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -285,7 +285,7 @@ impl ConditionTrigger {
                 let diagnosis = engine.diagnose(&evidences);
 
                 // 发布结果
-                let publisher = ResultPublisher::new("/tmp/nuts");
+                let publisher = ResultPublisher::new("/tmp/podflow");
                 for evidence in &evidences {
                     if let Err(e) = publisher.publish_evidence(evidence) {
                         tracing::warn!("Failed to publish evidence: {:?}", e);
@@ -371,8 +371,8 @@ impl std::fmt::Display for TriggerError {
 
 impl std::error::Error for TriggerError {}
 
-impl From<NutsError> for TriggerError {
-    fn from(err: NutsError) -> Self {
+impl From<PodflowError> for TriggerError {
+    fn from(err: PodflowError) -> Self {
         TriggerError::CollectionFailed(err.to_string())
     }
 }

@@ -1,31 +1,31 @@
-//! Nuts Observer - HTTP 服务主程序
+//! PodFlow - HTTP 服务主程序
 //!
 //! 纯服务端二进制，通过 HTTP API 提供诊断服务。
-//! CLI 客户端请使用独立的 nuts-observer-cli。
+//! CLI 客户端请使用独立的 podflow-cli。
 
-use nuts_observer::api::condition::{ConditionTrigger};
-use nuts_observer::api::nri::router as nri_router;
-use nuts_observer::api::nri_v3_enhanced::{router as nri_v3_enhanced_router, NriV3ApiState};
-use nuts_observer::api::trigger::router as trigger_router;
-use nuts_observer::api::health::{router as health_router, AppState};
-use nuts_observer::api::diagnosis::{router as diagnosis_router, DiagnosisApiState};
-use nuts_observer::api::case::router as case_router;
+use podflow::api::condition::{ConditionTrigger};
+use podflow::api::nri::router as nri_router;
+use podflow::api::nri_v3_enhanced::{router as nri_v3_enhanced_router, NriV3ApiState};
+use podflow::api::trigger::router as trigger_router;
+use podflow::api::health::{router as health_router, AppState};
+use podflow::api::diagnosis::{router as diagnosis_router, DiagnosisApiState};
+use podflow::api::case::router as case_router;
 use axum::Router;
-use nuts_observer::collector::nri_v3::create_nri_v3;
-use nuts_observer::collector::oom_events::{OomEventListener, OomListenerConfig};
+use podflow::collector::nri_v3::create_nri_v3;
+use podflow::collector::oom_events::{OomEventListener, OomListenerConfig};
 
 // Containerd NRI 官方协议支持 (仅在启用 nri-grpc feature 时可用)
 #[cfg(feature = "nri-grpc")]
-use nuts_observer::collector::nri_containerd::ContainerdNriConfig;
+use podflow::collector::nri_containerd::ContainerdNriConfig;
 #[cfg(feature = "nri-grpc")]
-use nuts_observer::collector::nri_mapping_v2::NriEvent;
+use podflow::collector::nri_mapping_v2::NriEvent;
 #[cfg(feature = "nri-grpc")]
 use tokio::sync::mpsc;
-use nuts_observer::config::Config;
-use nuts_observer::ai::async_bridge::{start_ai_system, AiWorker, AiWorkerConfig, AiResultStore};
-use nuts_observer::ai::{AiAdapter, EvidenceCheckConfig};
-use nuts_observer::publisher::ResultPublisher;
-use nuts_observer::types::error::{NutsError, Result};
+use podflow::config::Config;
+use podflow::ai::async_bridge::{start_ai_system, AiWorker, AiWorkerConfig, AiResultStore};
+use podflow::ai::{AiAdapter, EvidenceCheckConfig};
+use podflow::publisher::ResultPublisher;
+use podflow::types::error::{PodflowError, Result};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
@@ -144,7 +144,7 @@ async fn run_server() {
 
         // 使用共享的映射表实例
         let nri_v3_table = Arc::clone(&nri_table);
-        let containerd_nri = nuts_observer::collector::nri_containerd::ContainerdNriPlugin::new(
+        let containerd_nri = podflow::collector::nri_containerd::ContainerdNriPlugin::new(
             containerd_nri_config,
             nri_v3_table,
             nri_event_tx,
@@ -167,7 +167,7 @@ async fn run_server() {
             }
         });
 
-        tracing::info!("Containerd NRI Plugin service started (socket: /var/run/nri/nuts-observer.sock)");
+        tracing::info!("Containerd NRI Plugin service started (socket: /var/run/nri/podflow.sock)");
     }
 
     // 启动条件触发服务（从配置读取）
@@ -224,7 +224,7 @@ async fn run_server() {
         });
         
         // 启动Publisher通知接收任务（增量触发）
-        let publisher = ResultPublisher::new("/var/log/nuts");
+        let publisher = ResultPublisher::new("/var/log/podflow");
         let store_for_notif = Arc::clone(&store);
         tokio::spawn(async move {
             tracing::info!("[Publisher Notifier] Starting notification receiver...");
@@ -333,7 +333,7 @@ async fn run_server() {
 
     // 添加 API Key 认证中间件
     let config_read = config.read().await;
-    let api_key_config = nuts_observer::api::auth::ApiKeyConfig {
+    let api_key_config = podflow::api::auth::ApiKeyConfig {
         api_key: config_read.server.api_key.clone(),
         header_name: config_read.server.api_key_header.clone(),
     };
@@ -343,14 +343,14 @@ async fn run_server() {
 
     let app = app.layer(axum::middleware::from_fn_with_state(
         api_key_config,
-        nuts_observer::api::auth::api_key_auth,
+        podflow::api::auth::api_key_auth,
     ));
     
     let addr = std::net::SocketAddr::from((
         parse_bind_address(&bind_address),
         port,
     ));
-    tracing::info!("nuts-observer listening on {addr}");
+    tracing::info!("podflow listening on {addr}");
 
     // 启动 SIGHUP 信号监听器（配置热重载）
     let config_for_reload = Arc::clone(&config);
@@ -399,22 +399,22 @@ async fn run_server() {
 fn load_config() -> Result<Config> {
     // 尝试从多个路径加载配置文件
     let config_paths = vec![
-        "nuts.yaml",
-        "/etc/nuts/config.yaml",
-        "config/nuts.yaml",
+        "podflow.yaml",
+        "/etc/podflow/config.yaml",
+        "config/podflow.yaml",
     ];
 
     for path in &config_paths {
         if std::path::Path::new(path).exists() {
             tracing::info!("Loading config from: {}", path);
-            return Config::from_file(path).map_err(|e| NutsError::config(&e.to_string()));
+            return Config::from_file(path).map_err(|e| PodflowError::config(&e.to_string()));
         }
     }
 
     // 如果没有找到配置文件，检查环境变量
     if let Ok(config_path) = std::env::var("NUTS_CONFIG") {
         tracing::info!("Loading config from NUTS_CONFIG: {}", config_path);
-        return Config::from_file(config_path).map_err(|e| NutsError::config(&e.to_string()));
+        return Config::from_file(config_path).map_err(|e| PodflowError::config(&e.to_string()));
     }
 
     // 返回默认配置

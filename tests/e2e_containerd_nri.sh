@@ -1,6 +1,6 @@
 #!/bin/bash
-# Nuts Observer Containerd NRI 端到端测试脚本
-# 该脚本用于验证 nuts-observer 与 containerd NRI 的集成
+# PodFlow Containerd NRI 端到端测试脚本
+# 该脚本用于验证 podflow 与 containerd NRI 的集成
 
 set -e
 
@@ -11,9 +11,9 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # 配置
-NUTS_OBSERVER_URL="http://localhost:8080"
-NRI_SOCKET="/var/run/nri/nuts-observer.sock"
-TEST_NAMESPACE="nuts-test"
+PODFLOW_URL="http://localhost:8080"
+NRI_SOCKET="/var/run/nri/podflow.sock"
+TEST_NAMESPACE="podflow-test"
 TEST_POD_NAME="test-pod"
 
 # 日志函数
@@ -53,17 +53,17 @@ check_prerequisites() {
     log_info "前置条件检查通过"
 }
 
-# 检查 nuts-observer 服务状态
-check_nuts_observer() {
-    log_info "检查 nuts-observer 服务状态..."
+# 检查 podflow 服务状态
+check_podflow_observer() {
+    log_info "检查 podflow 服务状态..."
     
     # 检查 HTTP 服务
-    if ! curl -s "${NUTS_OBSERVER_URL}/health" > /dev/null 2>&1; then
-        log_error "nuts-observer HTTP 服务未启动 (检查 ${NUTS_OBSERVER_URL})"
+    if ! curl -s "${PODFLOW_URL}/health" > /dev/null 2>&1; then
+        log_error "podflow HTTP 服务未启动 (检查 ${PODFLOW_URL})"
         exit 1
     fi
     
-    log_info "nuts-observer HTTP 服务正常"
+    log_info "podflow HTTP 服务正常"
     
     # 检查 NRI Socket
     if [ -S "$NRI_SOCKET" ]; then
@@ -79,26 +79,26 @@ test_api_endpoints() {
     
     # 测试健康检查
     log_info "测试 /health 端点..."
-    health_response=$(curl -s "${NUTS_OBSERVER_URL}/health")
+    health_response=$(curl -s "${PODFLOW_URL}/health")
     echo "  响应: $health_response"
     
     # 测试 NRI V1 状态
     log_info "测试 /api/v1/nri/status 端点..."
-    v1_status=$(curl -s "${NUTS_OBSERVER_URL}/api/v1/nri/status")
+    v1_status=$(curl -s "${PODFLOW_URL}/api/v1/nri/status")
     echo "  响应: $v1_status"
     
     # 测试 NRI V3 状态
     log_info "测试 /api/v3/nri/status 端点..."
-    v3_status=$(curl -s "${NUTS_OBSERVER_URL}/api/v3/nri/status")
+    v3_status=$(curl -s "${PODFLOW_URL}/api/v3/nri/status")
     echo "  响应: $v3_status"
     
     # 测试 Prometheus 指标
     log_info "测试 /metrics 端点..."
-    metrics=$(curl -s "${NUTS_OBSERVER_URL}/metrics")
-    if echo "$metrics" | grep -q "nuts_"; then
-        echo "  ✓ 找到 nuts_* 指标"
+    metrics=$(curl -s "${PODFLOW_URL}/metrics")
+    if echo "$metrics" | grep -q "podflow_"; then
+        echo "  ✓ 找到 podflow_* 指标"
     else
-        log_warn "未找到 nuts_* 指标"
+        log_warn "未找到 podflow_* 指标"
     fi
     
     log_info "API 端点测试完成"
@@ -110,7 +110,7 @@ test_nri_webhook() {
     
     # 发送 ADD 事件
     log_info "发送 Pod ADD 事件..."
-    add_response=$(curl -s -X POST "${NUTS_OBSERVER_URL}/api/v1/nri/events" \
+    add_response=$(curl -s -X POST "${PODFLOW_URL}/api/v1/nri/events" \
         -H "Content-Type: application/json" \
         -d '{
             "event_type": "ADD",
@@ -130,12 +130,12 @@ test_nri_webhook() {
     
     # 查询 Pod 列表
     log_info "查询 Pod 列表..."
-    pods=$(curl -s "${NUTS_OBSERVER_URL}/api/v1/nri/pods")
+    pods=$(curl -s "${PODFLOW_URL}/api/v1/nri/pods")
     echo "  Pods: $pods"
     
     # 发送 DELETE 事件
     log_info "发送 Pod DELETE 事件..."
-    delete_response=$(curl -s -X POST "${NUTS_OBSERVER_URL}/api/v1/nri/events" \
+    delete_response=$(curl -s -X POST "${PODFLOW_URL}/api/v1/nri/events" \
         -H "Content-Type: application/json" \
         -d '{
             "event_type": "DELETE",
@@ -183,7 +183,7 @@ test_diagnosis_trigger() {
     log_info "测试诊断触发..."
     
     # 先添加一个测试 Pod
-    curl -s -X POST "${NUTS_OBSERVER_URL}/api/v1/nri/events" \
+    curl -s -X POST "${PODFLOW_URL}/api/v1/nri/events" \
         -H "Content-Type: application/json" \
         -d '{
             "event_type": "ADD",
@@ -201,7 +201,7 @@ test_diagnosis_trigger() {
     
     # 触发诊断
     log_info "触发诊断..."
-    trigger_response=$(curl -s -X POST "${NUTS_OBSERVER_URL}/v1/diagnostics:trigger" \
+    trigger_response=$(curl -s -X POST "${PODFLOW_URL}/v1/diagnostics:trigger" \
         -H "Content-Type: application/json" \
         -d '{
             "trigger_type": "manual",
@@ -220,7 +220,7 @@ test_diagnosis_trigger() {
         # 查询诊断结果
         sleep 2
         log_info "查询诊断结果..."
-        result=$(curl -s "${NUTS_OBSERVER_URL}/v1/diagnosis/${diagnosis_id}")
+        result=$(curl -s "${PODFLOW_URL}/v1/diagnosis/${diagnosis_id}")
         echo "  结果: $result"
     else
         log_warn "未能获取诊断 ID"
@@ -238,16 +238,16 @@ test_kubernetes_integration() {
     
     log_info "测试 Kubernetes 集成..."
     
-    # 检查 nuts-observer Pod 是否运行
-    pod_count=$(kubectl get pods -n kube-system -l app=nuts-observer-nri --no-headers 2>/dev/null | wc -l || echo "0")
+    # 检查 podflow Pod 是否运行
+    pod_count=$(kubectl get pods -n kube-system -l app=podflow-nri --no-headers 2>/dev/null | wc -l || echo "0")
     
     if [ "$pod_count" -gt 0 ]; then
-        log_info "找到 $pod_count 个 nuts-observer Pod"
+        log_info "找到 $pod_count 个 podflow Pod"
         
         # 查看 Pod 日志
-        kubectl logs -n kube-system -l app=nuts-observer-nri --tail=20 || true
+        kubectl logs -n kube-system -l app=podflow-nri --tail=20 || true
     else
-        log_warn "未找到 nuts-observer Pod，可能未部署"
+        log_warn "未找到 podflow Pod，可能未部署"
     fi
     
     # 创建测试 Pod
@@ -273,11 +273,11 @@ EOF
         log_info "等待测试 Pod 运行..."
         kubectl wait --for=condition=Ready pod/${TEST_POD_NAME} -n default --timeout=60s 2>/dev/null || true
         
-        # 检查 nuts-observer 是否收到事件
+        # 检查 podflow 是否收到事件
         sleep 3
-        log_info "检查 nuts-observer 是否收到 NRI 事件..."
+        log_info "检查 podflow 是否收到 NRI 事件..."
         
-        # 通过 port-forward 访问 nuts-observer API
+        # 通过 port-forward 访问 podflow API
         # 注意：实际测试需要在集群内或使用 port-forward
     fi
     
@@ -296,7 +296,7 @@ test_performance() {
     start_time=$(date +%s%N)
     
     for i in $(seq 1 100); do
-        curl -s -X POST "${NUTS_OBSERVER_URL}/api/v1/nri/events" \
+        curl -s -X POST "${PODFLOW_URL}/api/v1/nri/events" \
             -H "Content-Type: application/json" \
             -d "{
                 \"event_type\": \"ADD\",
@@ -313,7 +313,7 @@ test_performance() {
     log_info "100 个事件处理完成，耗时: ${duration_ms}ms"
     
     # 查询状态
-    v3_status=$(curl -s "${NUTS_OBSERVER_URL}/api/v3/nri/status")
+    v3_status=$(curl -s "${PODFLOW_URL}/api/v3/nri/status")
     echo "  当前状态: $v3_status"
     
     log_info "性能测试完成"
@@ -325,11 +325,11 @@ generate_report() {
     
     echo ""
     echo "========================================"
-    echo "    Nuts Observer Containerd NRI 测试报告"
+    echo "    PodFlow Containerd NRI 测试报告"
     echo "========================================"
     echo ""
     echo "测试时间: $(date)"
-    echo "nuts-observer URL: $NUTS_OBSERVER_URL"
+    echo "podflow URL: $PODFLOW_URL"
     echo "NRI Socket: $NRI_SOCKET"
     echo ""
     echo "服务状态:"
@@ -353,12 +353,12 @@ generate_report() {
 # 主函数
 main() {
     echo "========================================"
-    echo "Nuts Observer Containerd NRI E2E Test"
+    echo "PodFlow Containerd NRI E2E Test"
     echo "========================================"
     echo ""
     
     check_prerequisites
-    check_nuts_observer
+    check_podflow_observer
     test_api_endpoints
     test_nri_webhook
     test_nri_unix_socket

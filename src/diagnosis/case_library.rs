@@ -196,7 +196,7 @@ impl CaseLibrary {
         // 再尝试从配置文件加载扩展案例（尝试多个可能的路径）
         let possible_paths = [
             "cases/cases.yaml",
-            "/root/nuts/cases/cases.yaml",
+            "/root/podflow/cases/cases.yaml",
             "./cases/cases.yaml",
             "../cases/cases.yaml",
         ];

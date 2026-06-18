@@ -30,7 +30,7 @@ pub mod collector_client;
 // 引入 protobuf 生成的代码 (仅在启用 nri-grpc feature 时可用)
 #[cfg(feature = "nri-grpc")]
 pub mod proto {
-    tonic::include_proto!("nuts.collector");
+    tonic::include_proto!("podflow.collector");
     pub mod nri {
         tonic::include_proto!("nri.plugin.v1");
     }

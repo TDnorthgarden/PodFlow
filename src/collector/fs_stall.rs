@@ -1,4 +1,4 @@
-use crate::types::error::NutsError;
+use crate::types::error::PodflowError;
 use crate::types::evidence::*;
 use crate::types::evidence::{TopCalls, TopCall};
 use crate::collector::nri_mapping_v2::NriMappingTableV2;
@@ -60,7 +60,7 @@ fn make_evidence_id(task_id: &str, evidence_type: &str, collection_id: &str, sco
 /// 
 /// 最小实现方案：监控文件系统相关系统调用（read/write/open/sync等）的延迟
 /// 与 block_io 证据联动分析，可形成"文件系统卡顿与I/O"的关联结论
-pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Result<Evidence, NutsError> {
+pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Result<Evidence, PodflowError> {
     let scope_key = make_scope_key(
         cfg.pod.as_ref().and_then(|p| p.uid.as_deref()),
         cfg.cgroup_id.as_deref(),
@@ -92,7 +92,7 @@ pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Result<Evidence,
     {
         Ok(c) => c,
         Err(e) => {
-            let mut errors_guard = errors.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+            let mut errors_guard = errors.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
             errors_guard.push(CollectionError {
                 code: "BPFTRACE_SCRIPT_LOAD_FAILED".into(),
                 message: format!("Failed to start bpftrace: {}", e),
@@ -117,7 +117,7 @@ pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Result<Evidence,
         }
     };
     
-    let stdout = child.stdout.take().ok_or_else(|| NutsError::internal("Failed to capture stdout"))?;
+    let stdout = child.stdout.take().ok_or_else(|| PodflowError::internal("Failed to capture stdout"))?;
     let reader = BufReader::new(stdout);
     
     // 采集超时控制
@@ -140,7 +140,7 @@ pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Result<Evidence,
             match event.event_type.as_str() {
                 "fs_op_complete" => {
                     if let Some(latency) = event.latency_us {
-                        let mut latencies = latencies_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                        let mut latencies = latencies_clone.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                         latencies.push(latency);
                         
                         // 按操作类型分类统计
@@ -148,7 +148,7 @@ pub fn run_fs_stall_collect_poc(cfg: FsStallCollectorConfig) -> Result<Evidence,
                             .or_else(|| event.syscall_name.clone())
                             .unwrap_or_else(|| "unknown".to_string());
                         
-                        let mut ops = ops_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                        let mut ops = ops_clone.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                         ops.entry(op_type)
                             .or_insert_with(Vec::new)
                             .push(latency);

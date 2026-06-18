@@ -1,7 +1,7 @@
 [Unit]
-Description=Nuts Collector Daemon (Privileged eBPF Collector)
+Description=PodFlow Collector Daemon (Privileged eBPF Collector)
 After=network.target
-Documentation=https://github.com/yourorg/nuts-observer
+Documentation=https://github.com/TDnorthgarden/PodFlow
 
 [Service]
 Type=simple
@@ -9,7 +9,7 @@ User=root
 Group=root
 
 # 启动命令
-ExecStart=/usr/bin/nuts-collector-daemon /run/nuts/collector.sock
+ExecStart=/usr/bin/podflow-collector /run/podflow/collector.sock
 ExecReload=/bin/kill -HUP $MAINPID
 
 # 重启策略
@@ -39,11 +39,11 @@ ProtectHostname=true
 ProtectProc=invisible
 
 # 允许读写的路径（必须在 ProtectSystem 之后定义）
-ReadWritePaths=/run/nuts /tmp
+ReadWritePaths=/run/podflow /tmp
 ReadOnlyPaths=/usr/share/bpftrace /usr/lib/bpftrace
 
-# 确保 /run/nuts 目录存在且可写
-RuntimeDirectory=nuts
+# 确保 /run/podflow 目录存在且可写
+RuntimeDirectory=podflow
 RuntimeDirectoryMode=0755
 
 # 限制 /proc 和 /sys 访问
@@ -65,7 +65,7 @@ TasksMax=1024
 # 日志
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=nuts-collector
+SyslogIdentifier=podflow-collector
 
 [Install]
 WantedBy=multi-user.target

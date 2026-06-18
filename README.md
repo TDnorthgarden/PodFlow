@@ -1,10 +1,10 @@
-# Nuts Observer - 容器智能故障分析插件
+# PodFlow - 容器智能故障分析插件
 
 [![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/build-manual-orange)]()
 
-Nuts Observer 是一个面向容器环境的智能故障诊断插件，基于 eBPF/bpftrace 采集内核级观测数据，通过规则引擎和 AI 增强生成诊断结论，并支持告警推送。
+PodFlow 是一个面向容器环境的智能故障诊断插件，基于 eBPF/bpftrace 采集内核级观测数据，通过规则引擎和 AI 增强生成诊断结论，并支持告警推送。
 
 ## ✨ 核心特性
 
@@ -108,19 +108,19 @@ cd PodFlow
 cargo build --release
 
 # 安装 bpftrace 脚本
-sudo mkdir -p /usr/share/nuts/bpftrace
-sudo cp -r scripts/bpftrace/* /usr/share/nuts/bpftrace/
-sudo chmod -R 755 /usr/share/nuts/bpftrace
+sudo mkdir -p /usr/share/podflow/bpftrace
+sudo cp -r scripts/bpftrace/* /usr/share/podflow/bpftrace/
+sudo chmod -R 755 /usr/share/podflow/bpftrace
 ```
 
 ### 快速体验
 
 ```bash
 # 启动服务（需要 root 权限）
-sudo ./target/release/nuts-observer
+sudo ./target/release/podflow
 
 # 在另一个终端使用 CLI
-./target/release/nuts-observer-cli -s http://localhost:8080 trigger --cgroup-id <cgroup-id> --evidence-types network,block_io
+./target/release/podflow-cli -s http://localhost:8080 trigger --cgroup-id <cgroup-id> --evidence-types network,block_io
 ```
 
 ## 🏗️ 架构设计
@@ -136,7 +136,7 @@ sudo ./target/release/nuts-observer
 └───────────────────────────────────────┼────────────────────┘
                                         │
 ┌───────────────────────────────────────▼────────────────────┐
-│                 Nuts Observer (Core Plugin)                 │
+│                 PodFlow (Core Plugin)                 │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
 │  │   Trigger   │  │  Collector  │  │  Evidence   │        │
 │  │   Service   │  │ (bpftrace)  │  │ Aggregator  │        │
@@ -186,12 +186,12 @@ sudo ./target/release/nuts-observer
 ## 📁 项目结构
 
 ```
-nuts-observer/
+podflow/
 ├── src/
 │   ├── main.rs              # 主服务入口
 │   ├── lib.rs               # 库定义
 │   ├── bin/
-│   │   ├── nuts_observer_cli.rs      # CLI 工具
+│   │   ├── podflow_observer_cli.rs      # CLI 工具
 │   │   └── collector_daemon.rs       # 特权采集守护进程
 │   ├── api/                 # HTTP API 实现
 │   ├── collector/           # 数据采集模块
@@ -220,7 +220,7 @@ nuts-observer/
 
 ### 主配置文件
 
-创建 `/etc/nuts/config.yaml`：
+创建 `/etc/podflow/config.yaml`：
 
 ```yaml
 # 服务器配置
@@ -256,7 +256,7 @@ condition_triggers:
 
 # 采集器配置
 collector:
-  daemon_socket: "/run/nuts/collector.sock"
+  daemon_socket: "/run/podflow/collector.sock"
   fallback_mode: "dev_sudo"
   max_collection_time_secs: 60
 ```
@@ -309,18 +309,18 @@ curl "http://localhost:8080/v1/diagnostics/<task-id>"
 
 ```bash
 # 查看帮助
-./target/release/nuts-observer-cli --help
+./target/release/podflow-cli --help
 
 # 触发诊断
-./target/release/nuts-observer-cli -s http://localhost:8080 trigger \
+./target/release/podflow-cli -s http://localhost:8080 trigger \
   --cgroup-id <cgroup-id> \
   --evidence-types network,block_io
 
 # 查询 AI 增强结果（使用诊断 ID）
-./target/release/nuts-observer-cli -s http://localhost:8080 query --diagnosis-id <diagnosis-id>
+./target/release/podflow-cli -s http://localhost:8080 query --diagnosis-id <diagnosis-id>
 
 # 查看服务状态
-./target/release/nuts-observer-cli -s http://localhost:8080 status
+./target/release/podflow-cli -s http://localhost:8080 status
 ```
 
 ## 🐳 容器化部署（计划中）
@@ -339,33 +339,33 @@ RUN cargo build --release
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y bpftrace && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/nuts-observer /usr/local/bin/
-COPY --from=builder /app/target/release/nuts-collector-daemon /usr/local/bin/
-COPY --from=builder /app/scripts/bpftrace /usr/share/nuts/bpftrace
-COPY config.yaml /etc/nuts/config.yaml
+COPY --from=builder /app/target/release/podflow /usr/local/bin/
+COPY --from=builder /app/target/release/podflow-collector /usr/local/bin/
+COPY --from=builder /app/scripts/bpftrace /usr/share/podflow/bpftrace
+COPY config.yaml /etc/podflow/config.yaml
 EXPOSE 8080
-CMD ["nuts-observer"]
+CMD ["podflow"]
 ```
 
 构建并运行：
 
 ```bash
-docker build -t nuts-observer:latest .
-docker run -d --name nuts-observer --privileged --pid=host -p 8080:8080 nuts-observer:latest
+docker build -t podflow:latest .
+docker run -d --name podflow --privileged --pid=host -p 8080:8080 podflow:latest
 ```
 
 ### 运行容器
 
 ```bash
 docker run -d \
-  --name nuts-observer \
+  --name podflow \
   --privileged \
   --pid=host \
   -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
-  -v /run/nuts:/run/nuts \
-  -v /etc/nuts:/etc/nuts:ro \
+  -v /run/podflow:/run/podflow \
+  -v /etc/podflow:/etc/podflow:ro \
   -p 8080:8080 \
-  nuts-observer:latest
+  podflow:latest
 ```
 
 ## 🏭 生产环境部署
@@ -374,21 +374,21 @@ docker run -d \
 
 ```bash
 # 创建系统用户和组
-sudo groupadd nuts
-sudo useradd -r -g nuts -s /bin/false nuts
+sudo groupadd podflow
+sudo useradd -r -g podflow -s /bin/false podflow
 
 # 创建目录
-sudo mkdir -p /etc/nuts /var/log/nuts /run/nuts /usr/share/nuts/bpftrace
+sudo mkdir -p /etc/podflow /var/log/podflow /run/podflow /usr/share/podflow/bpftrace
 
 # 复制文件
 sudo cp systemd/*.service /etc/systemd/system/
-sudo cp config.yaml /etc/nuts/
-sudo cp -r scripts/bpftrace/* /usr/share/nuts/bpftrace/
+sudo cp config.yaml /etc/podflow/
+sudo cp -r scripts/bpftrace/* /usr/share/podflow/bpftrace/
 
 # 启动服务
 sudo systemctl daemon-reload
-sudo systemctl enable nuts-collector-daemon nuts-observer
-sudo systemctl start nuts-collector-daemon nuts-observer
+sudo systemctl enable podflow-collector podflow
+sudo systemctl start podflow-collector podflow
 ```
 
 ## 📊 支持的证据类型
@@ -459,10 +459,10 @@ ai:
 
 ```bash
 # 查看所有案例（开发中）
-# ./target/release/nuts-observer-cli case list
+# ./target/release/podflow-cli case list
 
 # 匹配当前状态（开发中）
-# ./target/release/nuts-observer-cli case match --target pod:nginx
+# ./target/release/podflow-cli case match --target pod:nginx
 ```
 
 内置案例包括：
@@ -490,13 +490,13 @@ curl http://localhost:8080/health/stats
 
 ```bash
 # 查看服务日志
-sudo journalctl -u nuts-observer -f
+sudo journalctl -u podflow -f
 
 # 查看采集守护进程日志
-sudo journalctl -u nuts-collector-daemon -f
+sudo journalctl -u podflow-collector -f
 
 # 查看结构化诊断日志
-tail -f /var/log/nuts/diagnostics.log
+tail -f /var/log/podflow/diagnostics.log
 ```
 
 ## 🐛 故障排除
@@ -509,13 +509,13 @@ tail -f /var/log/nuts/diagnostics.log
    sudo bpftrace -l 'tracepoint:syscalls:sys_enter_*' | head -5
    
    # 检查 capabilities
-   sudo getcap /usr/local/bin/nuts-collector-daemon
+   sudo getcap /usr/local/bin/podflow-collector
    ```
 
 2. **bpftrace 脚本加载失败**
    ```bash
    # 验证脚本语法
-   sudo bpftrace -d /usr/share/nuts/bpftrace/network/tcp_connect.bt
+   sudo bpftrace -d /usr/share/podflow/bpftrace/network/tcp_connect.bt
    
    # 检查内核版本
    uname -r
@@ -527,8 +527,8 @@ tail -f /var/log/nuts/diagnostics.log
    sudo lsof -i :8080
    
    # 查看服务状态
-   sudo systemctl status nuts-observer
-   sudo journalctl -u nuts-observer -n 50
+   sudo systemctl status podflow
+   sudo journalctl -u podflow -n 50
    ```
 
 ### 调试模式
@@ -536,7 +536,7 @@ tail -f /var/log/nuts/diagnostics.log
 ```bash
 # 启用调试日志
 export RUST_LOG=debug
-./target/release/nuts-observer
+./target/release/podflow
 
 # 或修改配置文件
 log_level: "debug"
@@ -592,4 +592,4 @@ cargo clippy
 
 ---
 
-**Nuts Observer** - 让容器故障诊断更智能、更高效！ 🚀
+**PodFlow** - 让容器故障诊断更智能、更高效！ 🚀

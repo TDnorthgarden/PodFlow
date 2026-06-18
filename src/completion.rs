@@ -1,12 +1,12 @@
 //! Shell completion module
 //!
-//! Provides shell completion functionality for nuts-observer CLI
+//! Provides shell completion functionality for podflow CLI
 
 /// Generate bash completion script
 pub fn generate_bash_completion() -> String {
     format!(r#"
-# nuts-observer bash completion
-_nuts_observer_completion() {{
+# podflow bash completion
+_podflow_completion() {{
     local cur prev words cword
     COMPREPLY=()
     cur="${{COMP_WORDS[COMP_CWORD]}}"
@@ -14,7 +14,7 @@ _nuts_observer_completion() {{
     words="${{COMP_WORDS[@]}}"
 
     case "${{prev}}" in
-        nuts-observer)
+        podflow)
             case "${{cur}}" in
                 "")
                     COMPREPLY=(trigger watch list-pods export completion config health)
@@ -39,16 +39,16 @@ _nuts_observer_completion() {{
     return 0
 }}
 
-complete -F _nuts_observer_completion nuts-observer
+complete -F _podflow_completion podflow
 "#)
 }
 
 /// Generate zsh completion script
 pub fn generate_zsh_completion() -> String {
     format!(r#"
-#compdef -n _nuts_observer nuts-observer
+#compdef -n _podflow podflow
 
-_nuts_observer() {{
+_podflow() {{
     local -a commands
     commands=(
         'trigger:Trigger manual diagnostics'
@@ -62,7 +62,7 @@ _nuts_observer() {{
 
     if (( CURRENT == 1 )); then
         _describe 'commands'
-        _nuts_observer_commands
+        _podflow_commands
         return
     fi
 
@@ -78,17 +78,17 @@ _nuts_observer() {{
 /// Generate fish completion script
 pub fn generate_fish_completion() -> String {
     format!(r#"
-# nuts-observer fish completion
+# podflow fish completion
 
-complete -c nuts-observer -n '__fish_nuts_observer_no_subcommand' -f
+complete -c podflow -n '__fish_podflow_no_subcommand' -f
 
-function __fish_nuts_observer_no_subcommand
+function __fish_podflow_no_subcommand
     for cmd in trigger watch list-pods export completion config health
         echo $cmd
     end
 end
 
-complete -c nuts-observer -n '__fish_nuts_observer_using_command' -x -a '
+complete -c podflow -n '__fish_podflow_using_command' -x -a '
 command trigger
 command watch
 command list-pods
@@ -96,9 +96,9 @@ command export
 command completion
 command config
 command health
-' -p 'nuts-observer'
+' -p 'podflow'
 
-complete -c nuts-observer -n '__fish_nuts_observer_using_command' -l trigger -s 'trigger' -d 'Trigger manual diagnostics' -a '
+complete -c podflow -n '__fish_podflow_using_command' -l trigger -s 'trigger' -d 'Trigger manual diagnostics' -a '
 {
     short   long     description
     u       pod-uid  "Target Pod UID"
@@ -112,7 +112,7 @@ complete -c nuts-observer -n '__fish_nuts_observer_using_command' -l trigger -s 
     d       detailed   "Show detailed output"
 }'
 
-complete -c nuts-observer -n '__fish_nuts_observer_using_command' -l watch -s 'watch' -d 'Watch mode for real-time monitoring' -a '
+complete -c podflow -n '__fish_podflow_using_command' -l watch -s 'watch' -d 'Watch mode for real-time monitoring' -a '
 {
     short   long     description
     u       pod-uid  "Target Pod UID"
@@ -126,7 +126,7 @@ complete -c nuts-observer -n '__fish_nuts_observer_using_command' -l watch -s 'w
     d       detailed   "Show detailed output"
 }'
 
-complete -c nuts-observer -n '__fish_nuts_observer_using_command' -l list-pods -s 'list-pods' -d 'List pods' -a '
+complete -c podflow -n '__fish_podflow_using_command' -l list-pods -s 'list-pods' -d 'List pods' -a '
 {
     short   long     description
     n       namespace "Filter by namespace"
@@ -134,7 +134,7 @@ complete -c nuts-observer -n '__fish_nuts_observer_using_command' -l list-pods -
     o       output    "Output format"
 }'
 
-complete -c nuts-observer -n '__fish_nuts_observer_using_command' -l export -s 'export' -d 'Export case library' -a '
+complete -c podflow -n '__fish_podflow_using_command' -l export -s 'export' -d 'Export case library' -a '
 {
     short   long     description
     f       file      "Output file path"
@@ -143,7 +143,7 @@ complete -c nuts-observer -n '__fish_nuts_observer_using_command' -l export -s '
     o       output    "Output format"
 }'
 
-complete -c nuts-observer -n '__fish_nuts_observer_using_command' -l completion -s 'completion' -d 'Generate shell completion' -a '
+complete -c podflow -n '__fish_podflow_using_command' -l completion -s 'completion' -d 'Generate shell completion' -a '
 {
     short   long     description
     s       shell      "Shell type (bash, zsh, fish)"
@@ -152,11 +152,11 @@ complete -c nuts-observer -n '__fish_nuts_observer_using_command' -l completion 
 }
 
 /// Generate completion script based on shell type
-pub fn generate_completion_script(shell: &str) -> Result<String, crate::types::error::NutsError> {
+pub fn generate_completion_script(shell: &str) -> Result<String, crate::types::error::PodflowError> {
     match shell {
         "bash" => Ok(generate_bash_completion()),
         "zsh" => Ok(generate_zsh_completion()),
         "fish" => Ok(generate_fish_completion()),
-        _ => Err(crate::types::error::NutsError::InvalidInput(format!("Unsupported shell: {}", shell))),
+        _ => Err(crate::types::error::PodflowError::InvalidInput(format!("Unsupported shell: {}", shell))),
     }
 }

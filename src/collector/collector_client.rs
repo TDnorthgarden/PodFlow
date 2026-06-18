@@ -1,6 +1,6 @@
 //! Collector Client - 连接到特权采集守护进程
 //!
-//! 为非特权的 nuts-observer 提供访问 collector daemon 的接口。
+//! 为非特权的 podflow 提供访问 collector daemon 的接口。
 //! 使用 gRPC over Unix Socket 进行通信。
 
 use std::path::Path;
@@ -55,7 +55,7 @@ impl CollectorClientWrapper {
     /// 连接到 collector daemon
     /// 
     /// # Arguments
-    /// * `socket_path` - Unix Socket 路径，默认为 "/run/nuts/collector.sock"
+    /// * `socket_path` - Unix Socket 路径，默认为 "/run/podflow/collector.sock"
     pub async fn connect(socket_path: &str) -> Result<Self, CollectorClientError> {
         // 检查 socket 文件是否存在
         if !Path::new(socket_path).exists() {

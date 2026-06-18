@@ -108,7 +108,7 @@ NRI V3 提供基于 DashMap 的高性能 API 端点，支持并发读写和批�
 - `accepted_at_ms`: number
 
 ### 1.2 CLI（规划）
-- `nutsctl diagnostics trigger --manual ...`
+- `podflowctl diagnostics trigger --manual ...`
 
 CLI 入参建议与 API 字段保持一致（target/time_window/idempotency_key）。
 

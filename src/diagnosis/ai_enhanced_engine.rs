@@ -118,7 +118,7 @@ impl AiEnhancedEngine {
                     timeout_secs: 60,
                     max_retries: 2,
                     fallback_mode: AiFallbackMode::KeepOriginal,
-                    model: "nuts-ai-diagnosis".to_string(),
+                    model: "podflow-ai-diagnosis".to_string(),
                 })
             } else {
                 None

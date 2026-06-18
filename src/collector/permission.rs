@@ -4,7 +4,7 @@
 //! 1. **特权模式**（生产环境）：通过 bpfman 或特权代理执行 bpftrace
 //! 2. **开发模式**（本地测试）：直接 sudo 运行
 //!
-//! 目标：最小化 nuts 主进程的权限，隔离特权操作到独立组件
+//! 目标：最小化 podflow 主进程的权限，隔离特权操作到独立组件
 
 use std::process::Command;
 use std::sync::{Arc, OnceLock};

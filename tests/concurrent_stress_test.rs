@@ -14,9 +14,9 @@ use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 // 引入被测模块
-use nuts_observer::collector::nri_mapping_v2::NriMappingTableV2;
-use nuts_observer::collector::nri_batch::BatchProcessorConfig;
-use nuts_observer::types::evidence::Evidence;
+use podflow::collector::nri_mapping_v2::NriMappingTableV2;
+use podflow::collector::nri_batch::BatchProcessorConfig;
+use podflow::types::evidence::Evidence;
 
 /// 并发压力测试配置
 #[derive(Debug, Clone)]
@@ -158,19 +158,19 @@ impl ConcurrentStressTestSuite {
             evidence_id: format!("stress-test-event-{}", event_id),
             evidence_type: "cgroup_contention".to_string(),
             task_id: format!("stress-task-{}", event_id % 100),
-            collection: nuts_observer::types::evidence::CollectionMeta {
+            collection: podflow::types::evidence::CollectionMeta {
                 collection_id: format!("collection-{}", event_id),
                 collection_status: "success".to_string(),
                 probe_id: "stress-test-probe".to_string(),
                 errors: vec![],
             },
-            time_window: nuts_observer::types::evidence::TimeWindow {
+            time_window: podflow::types::evidence::TimeWindow {
                 start_time_ms: chrono::Utc::now().timestamp_millis() - 60000,
                 end_time_ms: chrono::Utc::now().timestamp_millis(),
                 collection_interval_ms: Some(1000),
             },
-            scope: nuts_observer::types::evidence::Scope {
-                pod: Some(nuts_observer::types::evidence::PodInfo {
+            scope: podflow::types::evidence::Scope {
+                pod: Some(podflow::types::evidence::PodInfo {
                     uid: Some(format!("pod-uid-{}", event_id % 50)),
                     name: Some(format!("stress-pod-{}", event_id % 20)),
                     namespace: Some("stress-test-ns".to_string()),
@@ -185,7 +185,7 @@ impl ConcurrentStressTestSuite {
             metric_summary,
             events_topology: vec![],
             top_calls: None,
-            attribution: nuts_observer::types::evidence::Attribution {
+            attribution: podflow::types::evidence::Attribution {
                 status: "success".to_string(),
                 confidence: Some(0.95),
                 source: Some("stress-test".to_string()),

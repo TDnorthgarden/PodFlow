@@ -3,9 +3,9 @@
 
 set -e
 
-NUTS_DIR="/root/nuts"
-TEMPLATE_DIR="$NUTS_DIR/scripts/bpftrace/templates"
-ADAPTER_DIR="$NUTS_DIR/scripts/bpftrace/adapters"
+PODFLOW_DIR="/root/podflow"
+TEMPLATE_DIR="$PODFLOW_DIR/scripts/bpftrace/templates"
+ADAPTER_DIR="$PODFLOW_DIR/scripts/bpftrace/adapters"
 
 echo "=========================================="
 echo "bpftrace标准输出集成测试"
@@ -73,7 +73,7 @@ echo ""
 
 # 测试5: 标准文档存在性
 echo "【测试5】验证标准文档..."
-if [ -f "$NUTS_DIR/docs/11_bpftrace_output_standard.md" ]; then
+if [ -f "$PODFLOW_DIR/docs/11_bpftrace_output_standard.md" ]; then
     echo "  ✓ bpftrace输出标准文档存在"
 else
     echo "  ✗ 文档不存在"
@@ -115,6 +115,6 @@ echo "  - 适配器工具: ✓"
 echo "  - 输出格式规范: ✓"
 echo ""
 echo "下一步:"
-echo "  1. 使用 ./nuts-observer validate-bpftrace 验证客户脚本"
+echo "  1. 使用 ./podflow validate-bpftrace 验证客户脚本"
 echo "  2. 使用适配器转换非标准脚本输出"
 echo "  3. 将标准输出接入采集器"

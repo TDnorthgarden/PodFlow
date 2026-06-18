@@ -18,15 +18,15 @@ use std::path::Path;
 use tokio::time::{sleep, Duration};
 
 // 引入被测模块
-use nuts_observer::api::trigger::router as trigger_router;
-use nuts_observer::collector::nri_mapping_v2::NriMappingTableV2;
-use nuts_observer::collector::nri_mapping_v2::{NriPodEvent, NriContainerInfo, NriEvent};
-use nuts_observer::publisher::ResultPublisher;
-use nuts_observer::ai::async_bridge::{start_ai_system, AiWorkerConfig};
-use nuts_observer::ai::{AiAdapter, AiAdapterConfig, AiFallbackMode};
-use nuts_observer::types::diagnosis::AiStatus;
-use nuts_observer::types::evidence::{TimeWindow, Evidence};
-use nuts_observer::types::diagnosis::DiagnosisResult;
+use podflow::api::trigger::router as trigger_router;
+use podflow::collector::nri_mapping_v2::NriMappingTableV2;
+use podflow::collector::nri_mapping_v2::{NriPodEvent, NriContainerInfo, NriEvent};
+use podflow::publisher::ResultPublisher;
+use podflow::ai::async_bridge::{start_ai_system, AiWorkerConfig};
+use podflow::ai::{AiAdapter, AiAdapterConfig, AiFallbackMode};
+use podflow::types::diagnosis::AiStatus;
+use podflow::types::evidence::{TimeWindow, Evidence};
+use podflow::types::diagnosis::DiagnosisResult;
 
 /// 创建测试用的 NRI 映射表和 Pod 数据
 fn create_test_nri_table() -> Arc<NriMappingTableV2> {
@@ -194,7 +194,7 @@ async fn test_e2e_ai_enhanced_pipeline() {
         sleep(Duration::from_millis(100)).await;
         
         // 模拟 AI 任务完成通知
-        let notification = nuts_observer::ai::async_bridge::AiCompletionNotification {
+        let notification = podflow::ai::async_bridge::AiCompletionNotification {
             task_id: "test-ai-task-001".to_string(),
             diagnosis_id: "test-ai-task-001".to_string(),
             status: "completed".to_string(),
@@ -205,13 +205,13 @@ async fn test_e2e_ai_enhanced_pipeline() {
         let mock_diagnosis = DiagnosisResult {
             schema_version: "diagnosis.v0.2".to_string(),
             task_id: "test-ai-task-001".to_string(),
-            status: nuts_observer::types::diagnosis::DiagnosisStatus::Done,
-            runtime: Some(nuts_observer::types::diagnosis::RuntimeInfo {
+            status: podflow::types::diagnosis::DiagnosisStatus::Done,
+            runtime: Some(podflow::types::diagnosis::RuntimeInfo {
                 started_time_ms: Some(1700000000000),
                 finished_time_ms: Some(1700000001500),
                 duration_ms: Some(1500),
             }),
-            trigger: nuts_observer::types::diagnosis::TriggerInfo {
+            trigger: podflow::types::diagnosis::TriggerInfo {
                 trigger_type: "manual".to_string(),
                 trigger_reason: "AI test trigger".to_string(),
                 trigger_time_ms: 1700000000000,
@@ -219,7 +219,7 @@ async fn test_e2e_ai_enhanced_pipeline() {
                 event_type: None,
             },
             evidence_refs: vec![
-                nuts_observer::types::diagnosis::EvidenceRef {
+                podflow::types::diagnosis::EvidenceRef {
                     evidence_id: "test-evidence-001".to_string(),
                     evidence_type: Some("block_io".to_string()),
                     scope_key: Some("test-scope-001".to_string()),
@@ -227,11 +227,11 @@ async fn test_e2e_ai_enhanced_pipeline() {
                 }
             ],
             conclusions: vec![
-                nuts_observer::types::diagnosis::Conclusion {
+                podflow::types::diagnosis::Conclusion {
                     conclusion_id: "ai-enhanced-001".to_string(),
                     title: "AI 增强诊断结论".to_string(),
                     confidence: 0.95,
-                    evidence_strength: nuts_observer::types::diagnosis::EvidenceStrength::High,
+                    evidence_strength: podflow::types::diagnosis::EvidenceStrength::High,
                     severity: Some(2),
                     details: Some(serde_json::json!({
                         "ai_enhanced": true,
@@ -240,11 +240,11 @@ async fn test_e2e_ai_enhanced_pipeline() {
                 }
             ],
             recommendations: vec![],
-            traceability: nuts_observer::types::diagnosis::Traceability {
+            traceability: podflow::types::diagnosis::Traceability {
                 references: vec![],
                 engine_version: Some("v0.2".to_string()),
             },
-            ai: Some(nuts_observer::types::diagnosis::AiInfo {
+            ai: Some(podflow::types::diagnosis::AiInfo {
                 enabled: true,
                 status: AiStatus::Ok,
                 summary: Some("AI 增强诊断完成".to_string()),
@@ -255,7 +255,7 @@ async fn test_e2e_ai_enhanced_pipeline() {
             }),
         };
         
-        let enhanced_diagnosis = nuts_observer::ai::AiEnhancedDiagnosis {
+        let enhanced_diagnosis = podflow::ai::AiEnhancedDiagnosis {
             original: mock_diagnosis.clone(),
             evidences: vec![], // 测试中使用空 evidences
             ai_output: None,
@@ -341,7 +341,7 @@ async fn test_e2e_publisher_integration() {
         evidence_id: "test-evidence-001".to_string(),
         evidence_type: "block_io".to_string(),
         task_id: "e2e-publisher-test".to_string(),
-        collection: nuts_observer::types::evidence::CollectionMeta {
+        collection: podflow::types::evidence::CollectionMeta {
             collection_id: "test-collection-001".to_string(),
             collection_status: "success".to_string(),
             probe_id: "test-probe".to_string(),
@@ -352,8 +352,8 @@ async fn test_e2e_publisher_integration() {
             end_time_ms: 1700000050000,
             collection_interval_ms: Some(5000),
         },
-        scope: nuts_observer::types::evidence::Scope {
-            pod: Some(nuts_observer::types::evidence::PodInfo {
+        scope: podflow::types::evidence::Scope {
+            pod: Some(podflow::types::evidence::PodInfo {
                 uid: Some("e2e-test-pod-001".to_string()),
                 name: Some("e2e-test-app".to_string()),
                 namespace: Some("default".to_string()),
@@ -374,7 +374,7 @@ async fn test_e2e_publisher_integration() {
         },
         events_topology: vec![],
         top_calls: None,
-        attribution: nuts_observer::types::evidence::Attribution {
+        attribution: podflow::types::evidence::Attribution {
             status: "success".to_string(),
             confidence: Some(0.95),
             source: Some("bpftrace".to_string()),
@@ -386,13 +386,13 @@ async fn test_e2e_publisher_integration() {
     let test_diagnosis = DiagnosisResult {
         schema_version: "diagnosis.v0.2".to_string(),
         task_id: "e2e-publisher-test".to_string(),
-        status: nuts_observer::types::diagnosis::DiagnosisStatus::Done,
-        runtime: Some(nuts_observer::types::diagnosis::RuntimeInfo {
+        status: podflow::types::diagnosis::DiagnosisStatus::Done,
+        runtime: Some(podflow::types::diagnosis::RuntimeInfo {
             started_time_ms: Some(1700000000000),
             finished_time_ms: Some(1700000001200),
             duration_ms: Some(1200),
         }),
-        trigger: nuts_observer::types::diagnosis::TriggerInfo {
+        trigger: podflow::types::diagnosis::TriggerInfo {
             trigger_type: "manual".to_string(),
             trigger_reason: "Manual test trigger".to_string(),
             trigger_time_ms: 1700000000000,
@@ -400,7 +400,7 @@ async fn test_e2e_publisher_integration() {
             event_type: None,
         },
         evidence_refs: vec![
-            nuts_observer::types::diagnosis::EvidenceRef {
+            podflow::types::diagnosis::EvidenceRef {
                 evidence_id: "test-evidence-001".to_string(),
                 evidence_type: Some("block_io".to_string()),
                 scope_key: Some("test-scope-001".to_string()),
@@ -408,11 +408,11 @@ async fn test_e2e_publisher_integration() {
             }
         ],
         conclusions: vec![
-            nuts_observer::types::diagnosis::Conclusion {
+            podflow::types::diagnosis::Conclusion {
                 conclusion_id: "test-conclusion-001".to_string(),
                 title: "I/O 延迟异常".to_string(),
                 confidence: 0.92,
-                evidence_strength: nuts_observer::types::diagnosis::EvidenceStrength::High,
+                evidence_strength: podflow::types::diagnosis::EvidenceStrength::High,
                 severity: Some(2),
                 details: Some(serde_json::json!({
                     "description": "检测到 I/O 延迟异常",
@@ -422,7 +422,7 @@ async fn test_e2e_publisher_integration() {
             }
         ],
         recommendations: vec![],
-        traceability: nuts_observer::types::diagnosis::Traceability {
+        traceability: podflow::types::diagnosis::Traceability {
             references: vec![],
             engine_version: Some("v0.2".to_string()),
         },

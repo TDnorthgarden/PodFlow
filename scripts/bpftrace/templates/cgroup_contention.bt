@@ -1,6 +1,6 @@
 #!/usr/bin/env bpftrace
 /*
- * Nuts-Observer Standard Cgroup Contention Probe
+ * PodFlow Standard Cgroup Contention Probe
  * 标准Cgroup资源争用采集脚本 - 符合 bpftrace_output_standard v0.1
  * 
  * Evidence Type: cgroup_contention

@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: nuts-observer-nri
+  name: podflow-nri
   namespace: kube-system
   labels:
-    app: nuts-observer-nri
+    app: podflow-nri
     component: observability
 spec:
   selector:
     matchLabels:
-      app: nuts-observer-nri
+      app: podflow-nri
   template:
     metadata:
       labels:
-        app: nuts-observer-nri
+        app: podflow-nri
         component: observability
     spec:
       hostNetwork: true
@@ -22,12 +22,12 @@ spec:
       
       # 特权容器（用于访问 host 的 /var/run/nri）
       containers:
-        - name: nuts-observer-nri
-          image: nuts-observer:latest
+        - name: podflow-nri
+          image: podflow:latest
           imagePullPolicy: IfNotPresent
           
           command:
-            - /usr/bin/nuts-observer
+            - /usr/bin/podflow
           
           ports:
             - name: http
@@ -74,15 +74,15 @@ spec:
             
             # 日志目录
             - name: log
-              mountPath: /var/log/nuts
+              mountPath: /var/log/podflow
             
             # 持久化数据
             - name: data
-              mountPath: /var/lib/nuts
+              mountPath: /var/lib/podflow
             
             # 配置文件
             - name: config
-              mountPath: /etc/nuts
+              mountPath: /etc/podflow
           
           livenessProbe:
             httpGet:
@@ -101,9 +101,9 @@ spec:
           env:
             - name: RUST_LOG
               value: "info"
-            - name: NUTS_NRI_SOCKET_PATH
-              value: "/var/run/nri/nuts-observer.sock"
-            - name: NUTS_NRI_AUTO_REGISTER
+            - name: PODFLOW_NRI_SOCKET_PATH
+              value: "/var/run/nri/podflow.sock"
+            - name: PODFLOW_NRI_AUTO_REGISTER
               value: "true"
       
       volumes:
@@ -129,17 +129,17 @@ spec:
         
         - name: log
           hostPath:
-            path: /var/log/nuts
+            path: /var/log/podflow
             type: DirectoryOrCreate
         
         - name: data
           hostPath:
-            path: /var/lib/nuts
+            path: /var/lib/podflow
             type: DirectoryOrCreate
         
         - name: config
           configMap:
-            name: nuts-observer-config
+            name: podflow-config
       
       tolerations:
         - operator: Exists
@@ -152,20 +152,20 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux
       
-      serviceAccountName: nuts-observer-nri
+      serviceAccountName: podflow-nri
       
       priorityClassName: system-node-critical
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: nuts-observer-nri
+  name: podflow-nri
   namespace: kube-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: nuts-observer-nri
+  name: podflow-nri
 rules:
   - apiGroups: [""]
     resources: ["pods", "nodes", "namespaces"]
@@ -180,20 +180,20 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: nuts-observer-nri
+  name: podflow-nri
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: nuts-observer-nri
+  name: podflow-nri
 subjects:
   - kind: ServiceAccount
-    name: nuts-observer-nri
+    name: podflow-nri
     namespace: kube-system
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: nuts-observer-config
+  name: podflow-config
   namespace: kube-system
 data:
   config.yaml: |

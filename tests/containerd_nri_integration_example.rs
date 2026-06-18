@@ -10,9 +10,9 @@ mod containerd_nri_integration_tests {
     use tokio::time::sleep;
 
     // 假设这些模块已导入
-    // use nuts_observer::collector::nri_mapping_v2::{NriMappingTableV2, PodInfo, ContainerInfo};
-    // use nuts_observer::collector::nri_v3::{NriV3, NriV3Config};
-    // use nuts_observer::types::error::NutsError;
+    // use podflow::collector::nri_mapping_v2::{NriMappingTableV2, PodInfo, ContainerInfo};
+    // use podflow::collector::nri_v3::{NriV3, NriV3Config};
+    // use podflow::types::error::PodflowError;
 
     /// 测试 1: 基础 NRI 事件提交
     ///

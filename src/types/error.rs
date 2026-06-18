@@ -15,7 +15,7 @@ use axum::{
 
 /// 统一的错误类型
 #[derive(Error, Debug)]
-pub enum NutsError {
+pub enum PodflowError {
     /// IO error
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
@@ -89,74 +89,74 @@ pub enum NutsError {
     Custom(String),
 }
 
-impl NutsError {
+impl PodflowError {
     /// Create request error
     pub fn request_error(msg: &str) -> Self {
-        NutsError::RequestError(msg.to_string())
+        PodflowError::RequestError(msg.to_string())
     }
     
     /// Create lock error
     pub fn lock_error(msg: &str) -> Self {
-        NutsError::LockError(msg.to_string())
+        PodflowError::LockError(msg.to_string())
     }
     
     /// Create network error
     pub fn network(msg: &str) -> Self {
-        NutsError::NetworkError(msg.to_string())
+        PodflowError::NetworkError(msg.to_string())
     }
     
     /// Create config error
     pub fn config(msg: &str) -> Self {
-        NutsError::ConfigError(msg.to_string())
+        PodflowError::ConfigError(msg.to_string())
     }
     
     /// Create validation error
     pub fn validation(msg: &str) -> Self {
-        NutsError::Validation(msg.to_string())
+        PodflowError::Validation(msg.to_string())
     }
     
     /// Create not-found error
     pub fn not_found(msg: &str) -> Self {
-        NutsError::NotFound(msg.to_string())
+        PodflowError::NotFound(msg.to_string())
     }
     
     /// Create internal error
     pub fn internal(msg: &str) -> Self {
-        NutsError::InternalError(msg.to_string())
+        PodflowError::InternalError(msg.to_string())
     }
     
     /// Create custom error
     pub fn custom(msg: &str) -> Self {
-        NutsError::Custom(msg.to_string())
+        PodflowError::Custom(msg.to_string())
     }
 }
 
 /// Result type alias
-pub type Result<T> = std::result::Result<T, NutsError>;
+pub type Result<T> = std::result::Result<T, PodflowError>;
 
 #[cfg(feature = "api")]
-impl IntoResponse for NutsError {
+impl IntoResponse for PodflowError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {
-            NutsError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            NutsError::Validation(msg) => (StatusCode::BAD_REQUEST, msg),
-            NutsError::ConfigError(msg) => (StatusCode::BAD_REQUEST, msg),
-            NutsError::NetworkError(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
-            NutsError::LockError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            NutsError::Io(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.to_string()),
-            NutsError::Json(msg) => (StatusCode::BAD_REQUEST, msg.to_string()),
-            NutsError::Yaml(msg) => (StatusCode::BAD_REQUEST, msg.to_string()),
-            NutsError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            NutsError::Custom(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            PodflowError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            PodflowError::Validation(msg) => (StatusCode::BAD_REQUEST, msg),
+            PodflowError::ConfigError(msg) => (StatusCode::BAD_REQUEST, msg),
+            PodflowError::NetworkError(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
+            PodflowError::LockError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            PodflowError::Io(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.to_string()),
+            PodflowError::Json(msg) => (StatusCode::BAD_REQUEST, msg.to_string()),
+            PodflowError::Yaml(msg) => (StatusCode::BAD_REQUEST, msg.to_string()),
+            PodflowError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            PodflowError::Custom(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             // Handle other variants
-            NutsError::RequestError(msg) => (StatusCode::BAD_REQUEST, msg),
-            NutsError::InvalidInput(msg) => (StatusCode::BAD_REQUEST, msg),
-            NutsError::AuthError(msg) => (StatusCode::UNAUTHORIZED, msg),
-            NutsError::PermissionError(msg) => (StatusCode::FORBIDDEN, msg),
-            NutsError::DataError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            NutsError::UnknownError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            NutsError::IoError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            NutsError::JsonError(msg) => (StatusCode::BAD_REQUEST, msg),
+            PodflowError::RequestError(msg) => (StatusCode::BAD_REQUEST, msg),
+            PodflowError::InvalidInput(msg) => (StatusCode::BAD_REQUEST, msg),
+            PodflowError::AuthError(msg) => (StatusCode::UNAUTHORIZED, msg),
+            PodflowError::PermissionError(msg) => (StatusCode::FORBIDDEN, msg),
+            PodflowError::DataError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            PodflowError::UnknownError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            PodflowError::IoError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            PodflowError::JsonError(msg) => (StatusCode::BAD_REQUEST, msg),
         };
 
         let body = Json(serde_json::json!({

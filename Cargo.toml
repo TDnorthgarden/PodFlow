@@ -1,27 +1,27 @@
 [package]
-name = "nuts-observer"
+name = "podflow"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "nuts-observer"
+name = "podflow"
 path = "src/main.rs"
 
 [[bin]]
-name = "nuts-observer-cli"
-path = "src/bin/nuts_observer_cli.rs"
+name = "podflow-cli"
+path = "src/bin/podflow_cli.rs"
 
 [[bin]]
-name = "nuts-collector-daemon"
+name = "podflow-collector"
 path = "src/bin/collector_daemon.rs"
 required-features = ["nri-grpc"]
 
 [[bin]]
-name = "nuts-adapters"
-path = "src/bin/nuts_adapters_cli.rs"
+name = "podflow-adapters"
+path = "src/bin/podflow_adapters_cli.rs"
 
 [lib]
-name = "nuts_observer"
+name = "podflow"
 path = "src/lib.rs"
 
 [dependencies]

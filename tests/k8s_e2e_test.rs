@@ -22,10 +22,10 @@ use serde_json::json;
 use tower::util::ServiceExt;
 
 // 引入被测模块
-use nuts_observer::collector::nri_mapping_v2::NriMappingTableV2;
-use nuts_observer::collector::nri_mapping_v2::{NriPodEvent, NriContainerInfo, NriEvent};
-use nuts_observer::api::trigger::router as trigger_router;
-use nuts_observer::types::diagnosis::DiagnosisResult;
+use podflow::collector::nri_mapping_v2::NriMappingTableV2;
+use podflow::collector::nri_mapping_v2::{NriPodEvent, NriContainerInfo, NriEvent};
+use podflow::api::trigger::router as trigger_router;
+use podflow::types::diagnosis::DiagnosisResult;
 
 /// K8s E2E 测试配置
 #[derive(Debug, Clone)]
@@ -45,8 +45,8 @@ struct K8sTestConfig {
 impl Default for K8sTestConfig {
     fn default() -> Self {
         Self {
-            namespace: "nuts-e2e-test".to_string(),
-            pod_prefix: "nuts-test".to_string(),
+            namespace: "podflow-e2e-test".to_string(),
+            pod_prefix: "podflow-test".to_string(),
             image: "nginx:alpine".to_string(),
             test_duration_secs: 300, // 5分钟
             concurrent_pods: 3,
@@ -84,8 +84,8 @@ impl K8sE2ETestSuite {
             "metadata": {
                 "name": self.config.namespace,
                 "labels": {
-                    "app": "nuts-e2e-test",
-                    "created-by": "nuts-observer-test"
+                    "app": "podflow-e2e-test",
+                    "created-by": "podflow-test"
                 }
             }
         });
@@ -117,13 +117,13 @@ impl K8sE2ETestSuite {
                 "metadata": {
                     "name": pod_name,
                     "labels": {
-                        "app": "nuts-e2e-test",
+                        "app": "podflow-e2e-test",
                         "pod-id": i.to_string(),
                         "test-type": "e2e-k8s"
                     },
                     "annotations": {
-                        "nuts-observer/test": "k8s-e2e",
-                        "nuts-observer/pod-type": "test-workload"
+                        "podflow/test": "k8s-e2e",
+                        "podflow/pod-type": "test-workload"
                     }
                 },
                 "spec": {
@@ -299,13 +299,13 @@ impl K8sE2ETestSuite {
                     let mock_result = DiagnosisResult {
                         schema_version: "diagnosis.v0.2".to_string(),
                         task_id: task_id.to_string(),
-                        status: nuts_observer::types::diagnosis::DiagnosisStatus::Done,
-                        runtime: Some(nuts_observer::types::diagnosis::RuntimeInfo {
+                        status: podflow::types::diagnosis::DiagnosisStatus::Done,
+                        runtime: Some(podflow::types::diagnosis::RuntimeInfo {
                             started_time_ms: Some(chrono::Utc::now().timestamp_millis() - 5000),
                             finished_time_ms: Some(chrono::Utc::now().timestamp_millis()),
                             duration_ms: Some(5000),
                         }),
-                        trigger: nuts_observer::types::diagnosis::TriggerInfo {
+                        trigger: podflow::types::diagnosis::TriggerInfo {
                             trigger_type: "manual".to_string(),
                             trigger_reason: "K8s E2E test".to_string(),
                             trigger_time_ms: chrono::Utc::now().timestamp_millis(),
@@ -315,7 +315,7 @@ impl K8sE2ETestSuite {
                         evidence_refs: vec![],
                         conclusions: vec![],
                         recommendations: vec![],
-                        traceability: nuts_observer::types::diagnosis::Traceability {
+                        traceability: podflow::types::diagnosis::Traceability {
                             references: vec![],
                             engine_version: Some("v0.2".to_string()),
                         },
@@ -433,8 +433,8 @@ mod k8s_e2e_tests {
     async fn test_k8s_full_e2e_pipeline() {
         // 配置测试参数
         let config = K8sTestConfig {
-            namespace: "nuts-e2e-test".to_string(),
-            pod_prefix: "nuts-full-test".to_string(),
+            namespace: "podflow-e2e-test".to_string(),
+            pod_prefix: "podflow-full-test".to_string(),
             image: "nginx:alpine".to_string(),
             test_duration_secs: 120, // 2分钟
             concurrent_pods: 2,
@@ -452,8 +452,8 @@ mod k8s_e2e_tests {
     #[ignore]
     async fn test_k8s_multi_container_pod() {
         let config = K8sTestConfig {
-            namespace: "nuts-multi-container-test".to_string(),
-            pod_prefix: "nuts-multi".to_string(),
+            namespace: "podflow-multi-container-test".to_string(),
+            pod_prefix: "podflow-multi".to_string(),
             image: "nginx:alpine".to_string(),
             test_duration_secs: 60,
             concurrent_pods: 1,
@@ -468,8 +468,8 @@ mod k8s_e2e_tests {
     #[ignore]
     async fn test_k8s_high_concurrency() {
         let config = K8sTestConfig {
-            namespace: "nuts-concurrency-test".to_string(),
-            pod_prefix: "nuts-concurrent".to_string(),
+            namespace: "podflow-concurrency-test".to_string(),
+            pod_prefix: "podflow-concurrent".to_string(),
             image: "nginx:alpine".to_string(),
             test_duration_secs: 180,
             concurrent_pods: 5,
@@ -484,8 +484,8 @@ mod k8s_e2e_tests {
     #[ignore]
     async fn test_k8s_fault_recovery() {
         let config = K8sTestConfig {
-            namespace: "nuts-fault-test".to_string(),
-            pod_prefix: "nuts-fault".to_string(),
+            namespace: "podflow-fault-test".to_string(),
+            pod_prefix: "podflow-fault".to_string(),
             image: "nginx:alpine".to_string(),
             test_duration_secs: 90,
             concurrent_pods: 3,

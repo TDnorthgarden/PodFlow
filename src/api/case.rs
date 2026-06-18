@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::diagnosis::case_library::CaseLibrary;
-use crate::types::error::NutsError;
+use crate::types::error::PodflowError;
 
 /// 案例查询参数
 #[derive(Debug, Deserialize)]
@@ -90,7 +90,7 @@ pub fn router() -> Router {
 pub async fn list_cases_handler(
     State(library): State<Arc<CaseLibrary>>,
     Query(params): Query<CaseQueryParams>,
-) -> Result<Json<CaseListResponse>, NutsError> {
+) -> Result<Json<CaseListResponse>, PodflowError> {
     let page = params.page.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(20);
     
@@ -119,10 +119,10 @@ pub async fn list_cases_handler(
 pub async fn get_case_handler(
     State(library): State<Arc<CaseLibrary>>,
     Path(case_id): Path<String>,
-) -> Result<Json<crate::diagnosis::case_library::FaultCase>, NutsError> {
+) -> Result<Json<crate::diagnosis::case_library::FaultCase>, PodflowError> {
     match library.get_case(&case_id) {
         Some(case) => Ok(Json(case.clone())),
-        None => Err(NutsError::not_found(&format!("案例不存在: {}", case_id))),
+        None => Err(PodflowError::not_found(&format!("案例不存在: {}", case_id))),
     }
 }
 
@@ -130,7 +130,7 @@ pub async fn get_case_handler(
 pub async fn match_cases_handler(
     State(library): State<Arc<CaseLibrary>>,
     Query(params): Query<CaseQueryParams>,
-) -> Result<Json<CaseMatchResponse>, NutsError> {
+) -> Result<Json<CaseMatchResponse>, PodflowError> {
     let metrics_str = params.metrics.unwrap_or_default();
     
     // 解析指标参数
@@ -167,17 +167,17 @@ pub async fn match_cases_handler(
 pub async fn export_cases_handler(
     State(library): State<Arc<CaseLibrary>>,
     Query(_params): Query<CaseQueryParams>,
-) -> Result<String, NutsError> {
+) -> Result<String, PodflowError> {
     match library.export_yaml() {
         Ok(yaml) => Ok(yaml),
-        Err(e) => Err(NutsError::internal(&format!("导出案例库失败: {}", e))),
+        Err(e) => Err(PodflowError::internal(&format!("导出案例库失败: {}", e))),
     }
 }
 
 /// 获取案例库统计
 pub async fn get_stats_handler(
     State(library): State<Arc<CaseLibrary>>,
-) -> Result<Json<CaseStatsResponse>, NutsError> {
+) -> Result<Json<CaseStatsResponse>, PodflowError> {
     let stats = library.stats();
 
     let response = CaseStatsResponse {

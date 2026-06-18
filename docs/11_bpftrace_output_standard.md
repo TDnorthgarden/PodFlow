@@ -2,7 +2,7 @@
 
 ## 概述
 
-本规范定义了bpftrace诊断脚本的**标准输出格式**，使客户自定义脚本能与nuts-observer采集器无缝对接。
+本规范定义了bpftrace诊断脚本的**标准输出格式**，使客户自定义脚本能与podflow采集器无缝对接。
 
 ## 标准输出格式
 
@@ -89,7 +89,7 @@ END {
 
 ### 方法二: 使用转换适配器
 
-客户脚本保持原有输出格式，通过**nuts-bpftrace-adapter**转换：
+客户脚本保持原有输出格式，通过**podflow-bpftrace-adapter**转换：
 
 ```python
 # 客户脚本输出格式: "PID=1234 TIME=1234567890 LATENCY=1234us"
@@ -243,7 +243,7 @@ target_schema:
 
 ```bash
 # 检查脚本输出是否符合标准
-./nuts-observer validate-bpftrace --script ./my_probe.bt --timeout 5s
+./podflow validate-bpftrace --script ./my_probe.bt --timeout 5s
 
 # 输出:
 # ✓ 事件格式正确
@@ -281,7 +281,7 @@ target_schema:
 ### A. 完整字段类型定义
 
 ```yaml
-# /root/nuts/docs/schemas/bpftrace_output_v0.1.yaml
+# /root/podflow/docs/schemas/bpftrace_output_v0.1.yaml
 schemas:
   base_event:
     required: [type, pid, comm, ts_ms]
@@ -312,9 +312,9 @@ schemas:
 ```bash
 # 测试脚本输出合规性
 echo '{"type":"test","pid":1,"comm":"init","ts_ms":1234567890}' | \
-  ./nuts-observer validate --schema bpftrace_output
+  ./podflow validate --schema bpftrace_output
 
 # 测试数据转换
 echo '{"type":"tcp_connect","pid":1234,"comm":"test","latency_us":100,"ts_ms":1234567890}' | \
-  ./nuts-observer convert --to evidence --evidence-type network
+  ./podflow convert --to evidence --evidence-type network
 ```

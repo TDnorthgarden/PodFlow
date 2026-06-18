@@ -1,10 +1,10 @@
 # Containerd NRI 官方协议集成指南
 
-本文档描述了 nuts-observer 与 containerd NRI (Node Resource Interface) 官方协议的集成实现。
+本文档描述了 podflow 与 containerd NRI (Node Resource Interface) 官方协议的集成实现。
 
 ## 概述
 
-nuts-observer 现在支持 containerd NRI 官方 gRPC 协议，可以直接作为 NRI Plugin 与 containerd 集成，接收容器生命周期事件。
+podflow 现在支持 containerd NRI 官方 gRPC 协议，可以直接作为 NRI Plugin 与 containerd 集成，接收容器生命周期事件。
 
 ## 架构
 
@@ -14,7 +14,7 @@ nuts-observer 现在支持 containerd NRI 官方 gRPC 协议，可以直接作�
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │   ┌──────────────┐      gRPC/Unix Socket      ┌──────────────┐ │
-│   │  containerd  │  <──────────────────────>  │ nuts-observer│ │
+│   │  containerd  │  <──────────────────────>  │ podflow│ │
 │   │              │      NRI Protocol          │  NRI Plugin    │ │
 │   └──────────────┘                            └──────────────┘ │
 │          │                                           │          │
@@ -46,7 +46,7 @@ nuts-observer 现在支持 containerd NRI 官方 gRPC 协议，可以直接作�
 - **文件**: `src/collector/nri_containerd.rs`
 - **描述**: containerd NRI Plugin 的完整实现
 - **功能**:
-  - Unix Socket 监听 (`/var/run/nri/nuts-observer.sock`)
+  - Unix Socket 监听 (`/var/run/nri/podflow.sock`)
   - 自动向 containerd 注册
   - 处理 Configure/Synchronize/CreateContainer/UpdateContainer/StopContainer 事件
   - 转换为内部 NRI 事件格式
@@ -65,41 +65,41 @@ nuts-observer 现在支持 containerd NRI 官方 gRPC 协议，可以直接作�
 cargo build --release --features nri-grpc
 
 # 复制二进制文件
-sudo cp target/release/nuts-observer /usr/bin/
+sudo cp target/release/podflow /usr/bin/
 
 # 创建 NRI 配置目录
 sudo mkdir -p /etc/nri/conf.d
 
 # 复制 NRI 插件配置
-sudo cp deploy/nri/nuts-observer-nri.toml /etc/nri/conf.d/
+sudo cp deploy/nri/podflow-nri.toml /etc/nri/conf.d/
 
 # 启动服务
-sudo nuts-observer
+sudo podflow
 ```
 
 ### 方式 2: Systemd 服务部署
 
 ```bash
 # 复制 systemd 服务文件
-sudo cp systemd/nuts-observer.service /etc/systemd/system/
+sudo cp systemd/podflow.service /etc/systemd/system/
 
 # 重载 systemd
 sudo systemctl daemon-reload
 
 # 启动服务
-sudo systemctl start nuts-observer
-sudo systemctl enable nuts-observer
+sudo systemctl start podflow
+sudo systemctl enable podflow
 ```
 
 ### 方式 3: Kubernetes DaemonSet 部署（推荐生产环境）
 
 ```bash
 # 部署到 Kubernetes
-kubectl apply -f deploy/kubernetes/nuts-observer-nri-daemonset.yaml
+kubectl apply -f deploy/kubernetes/podflow-nri-daemonset.yaml
 
 # 验证部署
-kubectl get pods -n kube-system -l app=nuts-observer-nri
-kubectl logs -n kube-system -l app=nuts-observer-nri
+kubectl get pods -n kube-system -l app=podflow-nri
+kubectl logs -n kube-system -l app=podflow-nri
 ```
 
 ## Containerd 配置
@@ -137,10 +137,10 @@ sudo systemctl restart containerd
 
 ```bash
 # 检查套接字文件是否存在
-ls -la /var/run/nri/nuts-observer.sock
+ls -la /var/run/nri/podflow.sock
 
 # 检查权限
-stat /var/run/nri/nuts-observer.sock
+stat /var/run/nri/podflow.sock
 ```
 
 ### 2. 检查 containerd 日志
@@ -150,11 +150,11 @@ stat /var/run/nri/nuts-observer.sock
 sudo journalctl -u containerd -f | grep -i nri
 ```
 
-### 3. 检查 nuts-observer 日志
+### 3. 检查 podflow 日志
 
 ```bash
 # 查看 NRI 相关日志
-sudo journalctl -u nuts-observer -f | grep -i "ContainerdNri"
+sudo journalctl -u podflow -f | grep -i "ContainerdNri"
 ```
 
 ### 4. 创建测试 Pod
@@ -163,8 +163,8 @@ sudo journalctl -u nuts-observer -f | grep -i "ContainerdNri"
 # 创建测试 Pod
 kubectl run test-pod --image=nginx:alpine
 
-# 检查 nuts-observer 是否收到 NRI 事件
-kubectl logs -n kube-system -l app=nuts-observer-nri | grep -i "CreateContainer"
+# 检查 podflow 是否收到 NRI 事件
+kubectl logs -n kube-system -l app=podflow-nri | grep -i "CreateContainer"
 
 # 删除测试 Pod
 kubectl delete pod test-pod

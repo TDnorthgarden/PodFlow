@@ -2,7 +2,7 @@
 //!
 //! 测试 OpenAI 和 Anthropic 的真实 AI 调用、缓存、重试和降级
 
-use nuts_observer::ai::{
+use podflow::ai::{
     AiCallManager, AiResponseCache, OpenAiServiceClient, AnthropicServiceClient,
     RetryPolicy, AiServiceClient,
 };

@@ -1,4 +1,4 @@
-# Nuts Observer 灰度部署指南
+# PodFlow 灰度部署指南
 
 ## 概述
 
@@ -75,76 +75,76 @@ git push origin v0.1.0-rc1
 #### 镜像准备
 ```bash
 # 创建灰度镜像
-docker build -t nuts-observer:v0.1.0-rc1 .
+docker build -t podflow:v0.1.0-rc1 .
 
 # 推送到镜像仓库
-docker push your-registry.com/nuts-observer:v0.1.0-rc1
+docker push your-registry.com/podflow:v0.1.0-rc1
 
 # 验证镜像
-docker run --rm nuts-observer:v0.1.0-rc1 --version
+docker run --rm podflow:v0.1.0-rc1 --version
 ```
 
 ### 3. 配置文件准备
 
 #### 灰度配置模板
 ```yaml
-# /etc/nuts/gray-deploy.yaml
+# /etc/podflow/gray-deploy.yaml
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: nuts-observer-gray
+  name: podflow-gray
   namespace: monitoring
   labels:
-    app: nuts-observer
+    app: podflow
     version: v0.1.0-rc1
     deployment-type: gray
 spec:
   selector:
     matchLabels:
-      name: nuts-observer-gray
+      name: podflow-gray
   template:
     metadata:
       labels:
-        name: nuts-observer-gray
+        name: podflow-gray
         version: v0.1.0-rc1
         deployment-type: gray
     spec:
-      serviceAccountName: nuts-observer
+      serviceAccountName: podflow
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
         privileged: true
       containers:
-      - name: nuts-observer
-        image: your-registry.com/nuts-observer:v0.1.0-rc1
+      - name: podflow
+        image: your-registry.com/podflow:v0.1.0-rc1
         imagePullPolicy: IfNotPresent
         env:
-        - name: NUTS_DEPLOYMENT
+        - name: PODFLOW_DEPLOYMENT
           value: "gray"
-        - name: NUTS_LOG_LEVEL
+        - name: PODFLOW_LOG_LEVEL
           value: "info"
-        - name: NUTS_GRAY_MODE
+        - name: PODFLOW_GRAY_MODE
           value: "true"
-        - name: NUTS_SERVER
-          value: "http://nuts-api:8080"
+        - name: PODFLOW_SERVER
+          value: "http://podflow-api:8080"
         volumeMounts:
           - name: host-filesystem
             mountPath: /host
           - name: config-volume
-            mountPath: /etc/nuts
+            mountPath: /etc/podflow
           - name: log-volume
-            mountPath: /var/log/nuts
+            mountPath: /var/log/podflow
       volumes:
       - name: config-volume
         configMap:
-          name: nuts-gray-config
+          name: podflow-gray-config
       - name: host-filesystem
           hostPath:
             path: /
             type: DirectoryOrCreate
       - name: log-volume
         hostPath:
-            path: /var/log/nuts
+            path: /var/log/podflow
             type: DirectoryOrCreate
       updateStrategy:
         type: RollingUpdate
@@ -183,59 +183,59 @@ for i in "${!GRAY_NODES[@]}"; do
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: nuts-observer-gray
+  name: podflow-gray
   namespace: $NAMESPACE
   labels:
-    app: nuts-observer
+    app: podflow
     version: $IMAGE_TAG
     deployment-type: gray
 spec:
   selector:
     matchLabels:
-      name: nuts-observer-gray
+      name: podflow-gray
   template:
     metadata:
       labels:
-        name: nuts-observer-gray
+        name: podflow-gray
         version: $IMAGE_TAG
         deployment-type: gray
     spec:
-      serviceAccountName: nuts-observer
+      serviceAccountName: podflow
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
         privileged: true
       containers:
-      - name: nuts-observer
-        image: $REGISTRY/nuts-observer:$IMAGE_TAG
+      - name: podflow
+        image: $REGISTRY/podflow:$IMAGE_TAG
         imagePullPolicy: IfNotPresent
         env:
-        - name: NUTS_DEPLOYMENT
+        - name: PODFLOW_DEPLOYMENT
           value: "gray"
-        - name: NUTS_LOG_LEVEL
+        - name: PODFLOW_LOG_LEVEL
           value: "info"
-        - name: NUTS_GRAY_MODE
+        - name: PODFLOW_GRAY_MODE
           value: "true"
-        - name: NUTS_SERVER
-          value: "http://nuts-api:8080"
+        - name: PODFLOW_SERVER
+          value: "http://podflow-api:8080"
         volumeMounts:
           - name: host-filesystem
             mountPath: /host
           - name: config-volume
-            mountPath: /etc/nuts
+            mountPath: /etc/podflow
           - name: log-volume
-            mountPath: /var/log/nuts
+            mountPath: /var/log/podflow
       volumes:
       - name: config-volume
         configMap:
-          name: nuts-gray-config
+          name: podflow-gray-config
       - name: host-filesystem
           hostPath:
             path: /
             type: DirectoryOrCreate
       - name: log-volume
         hostPath:
-            path: /var/log/nuts
+            path: /var/log/podflow
             type: DirectoryOrCreate
       updateStrategy:
         type: RollingUpdate
@@ -279,11 +279,11 @@ monitor_gray_deployment() {
     echo "开始时间: $(date)"
     
     # 检查部署状态
-    kubectl get daemonset -n $namespace nuts-observer-gray
+    kubectl get daemonset -n $namespace podflow-gray
     
     # 检查Pod状态
     echo "Pod状态:"
-    kubectl get pods -n $namespace -l app=nuts-observer-gray
+    kubectl get pods -n $namespace -l app=podflow-gray
     
     # 检查服务状态
     echo "服务状态:"
@@ -293,7 +293,7 @@ monitor_gray_deployment() {
     echo "关键指标:"
     for node in "${GRAY_NODES[@]}"; do
         echo "节点 $node 指标:"
-        kubectl exec -n $namespace -l app=nuts-observer-gray -- kubectl get pods -o jsonpath='{.items[0].status.containerStatuses[0].state}' | grep -E "Running|Pending|Failed" || echo "Unknown"
+        kubectl exec -n $namespace -l app=podflow-gray -- kubectl get pods -o jsonpath='{.items[0].status.containerStatuses[0].state}' | grep -E "Running|Pending|Failed" || echo "Unknown"
     done
     
     echo "当前时间: $(date)"
@@ -332,11 +332,11 @@ done
 # 收集灰度日志
 collect_gray_logs() {
     local start_time=$(date +%s)
-    local log_file="/var/log/nuts/gray-deployment-${start_time}.log"
+    local log_file="/var/log/podflow/gray-deployment-${start_time}.log"
     
     for node in "${GRAY_NODES[@]}"; do
         echo "=== 收集节点 $node 日志 ===" >> $log_file
-        kubectl logs -n monitoring -l app=nuts-observer-gray --since=5m >> $log_file
+        kubectl logs -n monitoring -l app=podflow-gray --since=5m >> $log_file
         echo "节点 $node 日志收集完成" >> $log_file
     done
     
@@ -348,7 +348,7 @@ collect_gray_logs() {
 ```bash
 # 用户反馈收集脚本
 collect_feedback() {
-    local feedback_file="/var/log/nuts/gray-feedback-${start_time}.log"
+    local feedback_file="/var/log/podflow/gray-feedback-${start_time}.log"
     
     echo "=== 用户反馈收集 ===" >> $feedback_file
     echo "反馈渠道: 灰度监控群组" >> $feedback_file
@@ -390,59 +390,59 @@ rollback_gray_deployment() {
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: nuts-observer-gray
+  name: podflow-gray
   namespace: $NAMESPACE
   labels:
-    app: nuts-observer
+    app: podflow
     version: v0.1.0-stable
     deployment-type: gray
 spec:
       selector:
         matchLabels:
-          name: nuts-observer-gray
+          name: podflow-gray
       template:
         metadata:
           labels:
-            name: nuts-observer-gray
+            name: podflow-gray
             version: v0.1.0-stable
             deployment-type: gray
         spec:
-          serviceAccountName: nuts-observer
+          serviceAccountName: podflow
           securityContext:
             runAsUser: 1000
             runAsGroup: 1000
             privileged: true
           containers:
-      - name: nuts-observer
-        image: your-registry.com/nuts-observer:v0.1.0-stable
+      - name: podflow
+        image: your-registry.com/podflow:v0.1.0-stable
         imagePullPolicy: IfNotPresent
         env:
-        - name: NUTS_DEPLOYMENT
+        - name: PODFLOW_DEPLOYMENT
           value: "gray"
-        - name: NUTS_LOG_LEVEL
+        - name: PODFLOW_LOG_LEVEL
           value: "info"
-        - name: NUTS_GRAY_MODE
+        - name: PODFLOW_GRAY_MODE
           value: "true"
-        - name: NUTS_ROLLBACK
+        - name: PODFLOW_ROLLBACK
           value: "true"
         volumeMounts:
           - name: host-filesystem
             mountPath: /host
           - name: config-volume
-            mountPath: /etc/nuts
+            mountPath: /etc/podflow
           - name: log-volume
-            mountPath: /var/log/nuts
+            mountPath: /var/log/podflow
       volumes:
       - name: config-volume
         configMap:
-          name: nuts-gray-config
+          name: podflow-gray-config
       - name: host-filesystem
           hostPath:
             path: /
             type: DirectoryOrCreate
       - name: log-volume
         hostPath:
-          path: /var/log/nuts
+          path: /var/log/podflow
             type: DirectoryOrCreate
       updateStrategy:
         type: RollingUpdate

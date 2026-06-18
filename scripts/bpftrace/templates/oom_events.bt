@@ -1,6 +1,6 @@
 #!/usr/bin/env bpftrace
 /*
- * Nuts-Observer OOM Events Probe
+ * PodFlow OOM Events Probe
  * OOM 事件监听脚本 - 符合 bpftrace_output_standard v0.1
  * 
  * Evidence Type: oom_events

@@ -1,4 +1,4 @@
-use crate::types::error::NutsError;
+use crate::types::error::PodflowError;
 use crate::types::evidence::*;
 use crate::types::evidence::{TopCalls, TopCall};
 use crate::collector::nri_mapping_v2::NriMappingTableV2;
@@ -56,7 +56,7 @@ fn make_evidence_id(task_id: &str, evidence_type: &str, collection_id: &str, sco
 }
 
 /// 运行 bpftrace syscall 采集探针
-pub fn run_syscall_collect_poc(cfg: SyscallCollectorConfig) -> Result<Evidence, NutsError> {
+pub fn run_syscall_collect_poc(cfg: SyscallCollectorConfig) -> Result<Evidence, PodflowError> {
     let scope_key = make_scope_key(
         cfg.pod.as_ref().and_then(|p| p.uid.as_deref()),
         cfg.cgroup_id.as_deref(),
@@ -86,7 +86,7 @@ pub fn run_syscall_collect_poc(cfg: SyscallCollectorConfig) -> Result<Evidence, 
     {
         Ok(c) => c,
         Err(e) => {
-            let mut errors_guard = errors.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+            let mut errors_guard = errors.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
             errors_guard.push(CollectionError {
                 code: "BPFTRACE_SCRIPT_LOAD_FAILED".into(),
                 message: format!("Failed to start bpftrace: {}", e),
@@ -108,7 +108,7 @@ pub fn run_syscall_collect_poc(cfg: SyscallCollectorConfig) -> Result<Evidence, 
         }
     };
     
-    let stdout = child.stdout.take().ok_or_else(|| NutsError::internal("Failed to capture stdout"))?;
+    let stdout = child.stdout.take().ok_or_else(|| PodflowError::internal("Failed to capture stdout"))?;
     let reader = BufReader::new(stdout);
     
     // 采集超时控制
@@ -131,7 +131,7 @@ pub fn run_syscall_collect_poc(cfg: SyscallCollectorConfig) -> Result<Evidence, 
             match event.event_type.as_str() {
                 "syscall_exit" => {
                     if let Some(latency) = event.latency_us {
-                        let mut stats = stats_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                        let mut stats = stats_clone.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                         stats.entry(event.syscall_name.clone())
                             .or_insert_with(Vec::new)
                             .push(latency);

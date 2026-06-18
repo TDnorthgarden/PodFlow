@@ -12,7 +12,7 @@
 //!
 //! 同时实现了 Runtime 客户端接口，用于向 containerd 注册插件。
 
-use crate::types::error::NutsError;
+use crate::types::error::PodflowError;
 use crate::metrics::UnifiedMetrics;
 use std::path::Path;
 use std::sync::Arc;
@@ -154,8 +154,8 @@ impl ContainerdNriConfig {
 impl Default for ContainerdNriConfig {
     fn default() -> Self {
         Self {
-            socket_path: "/var/run/nri/nuts-observer.sock".to_string(),
-            plugin_name: "nuts-observer".to_string(),
+            socket_path: "/var/run/nri/podflow.sock".to_string(),
+            plugin_name: "podflow".to_string(),
             plugin_idx: "00".to_string(),
             nri_version: "1.0.0".to_string(),
             auto_register: true,
@@ -1127,9 +1127,9 @@ pub enum ContainerdNriError {
     NotConfigured,
 }
 
-impl From<ContainerdNriError> for NutsError {
+impl From<ContainerdNriError> for PodflowError {
     fn from(e: ContainerdNriError) -> Self {
-        NutsError::internal(&format!("Containerd NRI error: {}", e))
+        PodflowError::internal(&format!("Containerd NRI error: {}", e))
     }
 }
 

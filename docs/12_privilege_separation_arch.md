@@ -11,7 +11,7 @@
 │                       用户空间                                    │
 │                                                                  │
 │  ┌───────────────────────────────────────────────────────────┐   │
-│  │                 nuts-observer (普通用户)                 │   │
+│  │                 podflow (普通用户)                 │   │
 │  │                    PID: <uid> (如 1000)                    │   │
 │  │                                                          │   │
 │  │  • HTTP Server (API)                    ┌──────────┐    │   │
@@ -27,7 +27,7 @@
 │           │                       │                             │
 │           ▼                       ▼                             │
 │  ┌────────────────────┐   ┌──────────────────────────────┐   │
-│  │ nuts-collector-    │   │ nuts-config-daemon           │   │
+│  │ podflow.collector-    │   │ podflow-config-daemon           │   │
 │  │ daemon             │   │ (optional)                  │   │
 │  │                    │   │                              │   │
 │  │ PID: 0 (root)      │   │ PID: <uid> (普通用户)        │   │
@@ -42,7 +42,7 @@
 │  │ • 加载eBPF程序     │   │ • 配置文件可设为root:root    │   │
 │  │ • 采集内核数据     │   │   防止意外修改                │   │
 │  │                    │   │                              │   │
-│  │ Socket: /run/nuts/ │   │ Socket: /run/nuts/          │   │
+│  │ Socket: /run/podflow/ │   │ Socket: /run/podflow/          │   │
 │  │   collector.sock   │   │   config.sock                │   │
 │  │ (Unix Socket,      │   │                              │   │
 │  │  0600 权限)        │   │                              │   │
@@ -61,15 +61,15 @@
 
 ## 组件职责
 
-### 1. nuts-collector-daemon (特权组件)
+### 1. podflow-collector (特权组件)
 
 ```rust
-// src/bin/nuts-collector-daemon/main.rs
+// src/bin/podflow-collector/main.rs
 //! 特权采集守护进程
 //! 
 //! 权限要求:
 //! - 运行用户: root 或具有 CAP_BPF + CAP_SYS_ADMIN + CAP_SYS_PTRACE
-//! - 文件权限: /run/nuts/collector.sock (0660, root:root)
+//! - 文件权限: /run/podflow/collector.sock (0660, root:root)
 //! 
 //! 安全边界:
 //! - 只接受来自 Unix Socket 的请求
@@ -80,7 +80,7 @@
 use tonic::{transport::Server, Request, Response, Status};
 
 pub mod collector {
-    tonic::include_proto!("nuts.collector");
+    tonic::include_proto!("podflow.collector");
 }
 
 #[derive(Debug)]
@@ -132,7 +132,7 @@ impl collector::collector_server::Collector for CollectorService {
 }
 ```
 
-### 2. nuts-observer (非特权主进程)
+### 2. podflow (非特权主进程)
 
 ```rust
 // src/collector/collector_client.rs
@@ -183,7 +183,7 @@ impl CollectorClient {
 ```protobuf
 // proto/collector.proto
 syntax = "proto3";
-package nuts.collector;
+package podflow.collector;
 
 // 采集请求
 message CollectRequest {
@@ -251,14 +251,14 @@ pub fn create_secure_socket(path: &str) -> Result<UnixListener, std::io::Error> 
     // 创建 socket 文件
     let listener = UnixListener::bind(path)?;
     
-    // 设置权限：只有 root 和 nuts 用户可以访问
+    // 设置权限：只有 root 和 podflow 用户可以访问
     std::fs::set_permissions(
         path,
         std::fs::Permissions::from_mode(0o660)
     )?;
     
     // 设置属组（需要 root）
-    // chown root:nuts /run/nuts/collector.sock
+    // chown root:podflow /run/podflow/collector.sock
     
     Ok(listener)
 }
@@ -275,16 +275,16 @@ pub fn get_unix_credentials(stream: &UnixStream) -> Result<UCred, std::io::Error
 ### 方案A: systemd 服务 (推荐生产环境)
 
 ```ini
-# /etc/systemd/system/nuts-collector-daemon.service
+# /etc/systemd/system/podflow-collector.service
 [Unit]
-Description=Nuts Collector Daemon (Privileged)
+Description=PodFlow Collector Daemon (Privileged)
 After=network.target
 
 [Service]
 Type=simple
 User=root
-Group=nuts
-ExecStart=/usr/bin/nuts-collector-daemon --socket=/run/nuts/collector.sock
+Group=podflow
+ExecStart=/usr/bin/podflow-collector --socket=/run/podflow/collector.sock
 Restart=always
 RestartSec=5
 
@@ -294,7 +294,7 @@ CapabilityBoundingSet=CAP_BPF CAP_SYS_ADMIN CAP_SYS_PTRACE
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/run/nuts /tmp
+ReadWritePaths=/run/podflow /tmp
 
 # 资源限制
 LimitNOFILE=65536
@@ -312,32 +312,32 @@ WantedBy=multi-user.target
 version: '3.8'
 
 services:
-  nuts-collector:
-    image: nuts-collector-daemon:latest
+  podflow.collector:
+    image: podflow-collector:latest
     privileged: true  # 需要特权来加载eBPF
     cap_add:
       - BPF
       - SYS_ADMIN
       - SYS_PTRACE
     volumes:
-      - /run/nuts:/run/nuts
+      - /run/podflow:/run/podflow
       - /tmp:/tmp
     networks:
-      - nuts-internal
+      - podflow-internal
     
-  nuts-observer:
-    image: nuts-observer:latest
+  podflow:
+    image: podflow:latest
     user: "1000:1000"  # 非特权用户
     volumes:
-      - /run/nuts:/run/nuts:ro  # 只读访问 socket
+      - /run/podflow:/run/podflow:ro  # 只读访问 socket
     depends_on:
-      - nuts-collector
+      - podflow.collector
     networks:
-      - nuts-internal
+      - podflow-internal
       - external  # 对外提供API
 
 networks:
-  nuts-internal:
+  podflow-internal:
     internal: true
   external:
 ```
@@ -350,7 +350,7 @@ networks:
    - `proto/collector.proto`
    - 定义请求/响应消息
 
-2. **实现 nuts-collector-daemon**
+2. **实现 podflow-collector**
    - 创建 `src/bin/collector-daemon/main.rs`
    - 实现 gRPC 服务
    - Unix Socket 监听
@@ -397,7 +397,7 @@ let child = Command::new("sudo")
 async fn collect_via_daemon(
     config: &NetworkCollectorConfig
 ) -> Result<Evidence, CollectorError> {
-    let mut client = CollectorClient::connect("/run/nuts/collector.sock").await?;
+    let mut client = CollectorClient::connect("/run/podflow/collector.sock").await?;
     
     let output = client.collect(
         "scripts/bpftrace/network/tcp_connect.bt",

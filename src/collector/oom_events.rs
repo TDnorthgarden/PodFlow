@@ -2,7 +2,7 @@
 //!
 //! 监听内核 OOM Kill 事件，自动触发故障诊断
 
-use crate::types::error::NutsError;
+use crate::types::error::PodflowError;
 use crate::collector::nri_mapping_v2::NriMappingTableV2;
 use crate::collector::nri_mapping_v2::AttributionInfo;
 use serde::Deserialize;
@@ -133,7 +133,7 @@ impl OomEventListener {
     }
 
     /// 处理单个 OOM 事件
-    async fn handle_oom_event(&self, event: OomEvent) -> Result<(), NutsError> {
+    async fn handle_oom_event(&self, event: OomEvent) -> Result<(), PodflowError> {
         // 通过 PID 查询归属信息
         let attribution = match self.nri_table.resolve_attribution(None, None, Some(event.pid)) {
             Ok(info) => info,
@@ -173,9 +173,9 @@ impl OomEventListener {
     }
 
     /// 检查是否在冷却期
-    fn is_in_cooldown(&self, key: &str, now_ms: u64) -> Result<bool, NutsError> {
+    fn is_in_cooldown(&self, key: &str, now_ms: u64) -> Result<bool, PodflowError> {
         let cooldown_ms = self.config.cooldown_secs * 1000;
-        let triggers = self.last_trigger.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+        let triggers = self.last_trigger.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
         
         if let Some(&last_time) = triggers.get(key) {
             Ok((now_ms - last_time) < cooldown_ms)
@@ -185,8 +185,8 @@ impl OomEventListener {
     }
 
     /// 记录触发时间
-    fn record_trigger(&self, key: &str, ts_ms: u64) -> Result<(), NutsError> {
-        let mut triggers = self.last_trigger.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+    fn record_trigger(&self, key: &str, ts_ms: u64) -> Result<(), PodflowError> {
+        let mut triggers = self.last_trigger.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
         triggers.insert(key.to_string(), ts_ms);
         Ok(())
     }
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn test_oom_event_deserialize() -> Result<(), Box<dyn std::error::Error>> {
         let json = r#"{"type":"oom_kill","pid":1234,"comm":"java","ts_ms":1700000000000}"#;
-        let event: OomEvent = serde_json::from_str(json).map_err(NutsError::Json)?;
+        let event: OomEvent = serde_json::from_str(json).map_err(PodflowError::Json)?;
         assert_eq!(event.pid, 1234);
         assert_eq!(event.comm, "java");
         Ok(())

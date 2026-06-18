@@ -11,10 +11,10 @@ use std::sync::Arc;
 use tower::util::ServiceExt;
 
 // 引入被测模块
-use nuts_observer::api::nri::router as nri_router;
-use nuts_observer::api::trigger::router as trigger_router;
-use nuts_observer::collector::nri_mapping_v2::{NriMappingTableV2, NriPodEvent, NriContainerInfo, NriEvent};
-use nuts_observer::collector::nri_v3::{NriV3, NriV3Config};
+use podflow::api::nri::router as nri_router;
+use podflow::api::trigger::router as trigger_router;
+use podflow::collector::nri_mapping_v2::{NriMappingTableV2, NriPodEvent, NriContainerInfo, NriEvent};
+use podflow::collector::nri_v3::{NriV3, NriV3Config};
 
 /// 测试手动触发诊断端点
 #[tokio::test]

@@ -3,10 +3,10 @@
 
 set -e
 
-NUTS_DIR="/root/nuts"
-DAEMON_BIN="$NUTS_DIR/target/release/nuts-collector-daemon"
-OBSERVER_BIN="$NUTS_DIR/target/release/nuts-observer"
-SOCKET_PATH="/tmp/test-nuts-collector.sock"
+PODFLOW_DIR="/root/podflow"
+DAEMON_BIN="$PODFLOW_DIR/target/release/podflow-collector"
+OBSERVER_BIN="$PODFLOW_DIR/target/release/podflow"
+SOCKET_PATH="/tmp/test-podflow-collector.sock"
 
 echo "=========================================="
 echo "特权分离架构集成测试"
@@ -23,23 +23,23 @@ fi
 # 测试1: 检查二进制文件存在性
 echo "【测试1】验证二进制文件..."
 if [ -f "$DAEMON_BIN" ]; then
-    echo "  ✓ nuts-collector-daemon 存在"
+    echo "  ✓ podflow-collector 存在"
 else
-    echo "  ✗ nuts-collector-daemon 不存在，请先编译: cargo build --release"
+    echo "  ✗ podflow-collector 不存在，请先编译: cargo build --release"
     exit 1
 fi
 
 if [ -f "$OBSERVER_BIN" ]; then
-    echo "  ✓ nuts-observer 存在"
+    echo "  ✓ podflow 存在"
 else
-    echo "  ✗ nuts-observer 不存在"
+    echo "  ✗ podflow 不存在"
     exit 1
 fi
 echo ""
 
 # 测试2: 检查 systemd 服务文件
 echo "【测试2】验证 systemd 服务配置..."
-SERVICE_FILE="$NUTS_DIR/systemd/nuts-collector-daemon.service"
+SERVICE_FILE="$PODFLOW_DIR/systemd/podflow-collector.service"
 if [ -f "$SERVICE_FILE" ]; then
     echo "  ✓ 服务文件存在"
     
@@ -63,7 +63,7 @@ echo ""
 
 # 测试3: 检查 proto 文件
 echo "【测试3】验证 protobuf 定义..."
-PROTO_FILE="$NUTS_DIR/proto/collector.proto"
+PROTO_FILE="$PODFLOW_DIR/proto/collector.proto"
 if [ -f "$PROTO_FILE" ]; then
     echo "  ✓ collector.proto 存在"
     
@@ -93,7 +93,7 @@ if [ "$EUID" -eq 0 ]; then
     rm -f "$SOCKET_PATH"
     
     # 启动 daemon（后台）
-    echo "  启动 nuts-collector-daemon..."
+    echo "  启动 podflow-collector..."
     "$DAEMON_BIN" "$SOCKET_PATH" &
     DAEMON_PID=$!
     
@@ -130,7 +130,7 @@ echo ""
 
 # 测试5: 检查客户端代码
 echo "【测试5】验证客户端代码..."
-CLIENT_FILE="$NUTS_DIR/src/collector/collector_client.rs"
+CLIENT_FILE="$PODFLOW_DIR/src/collector/collector_client.rs"
 if [ -f "$CLIENT_FILE" ]; then
     echo "  ✓ collector_client.rs 存在"
     
@@ -153,7 +153,7 @@ echo ""
 
 # 测试6: 检查权限控制代码
 echo "【测试6】验证权限控制实现..."
-PERM_FILE="$NUTS_DIR/src/collector/permission.rs"
+PERM_FILE="$PODFLOW_DIR/src/collector/permission.rs"
 if [ -f "$PERM_FILE" ]; then
     echo "  ✓ permission.rs 存在"
     
@@ -175,7 +175,7 @@ echo ""
 
 # 测试7: 编译测试
 echo "【测试7】验证代码编译..."
-cd "$NUTS_DIR"
+cd "$PODFLOW_DIR"
 if cargo build --release 2>&1 | grep -q "error"; then
     echo "  ✗ 编译失败"
     exit 1
@@ -190,19 +190,19 @@ echo "测试完成！"
 echo "=========================================="
 echo ""
 echo "特权分离架构组件:"
-echo "  ✓ nuts-collector-daemon (特权组件)"
+echo "  ✓ podflow-collector (特权组件)"
 echo "  ✓ CollectorClient (非特权客户端)"
 echo "  ✓ AutoFallbackCollector (自动回退)"
 echo "  ✓ Unix Socket gRPC 通信"
 echo "  ✓ systemd 服务配置"
 echo ""
 echo "部署步骤:"
-echo "  1. 安装 daemon: sudo cp nuts-collector-daemon /usr/bin/"
-echo "  2. 安装服务: sudo cp systemd/nuts-collector-daemon.service /etc/systemd/system/"
-echo "  3. 创建用户组: sudo groupadd nuts (如不存在)"
-echo "  4. 启动服务: sudo systemctl enable --now nuts-collector-daemon"
-echo "  5. 验证: sudo systemctl status nuts-collector-daemon"
+echo "  1. 安装 daemon: sudo cp podflow-collector /usr/bin/"
+echo "  2. 安装服务: sudo cp systemd/podflow-collector.service /etc/systemd/system/"
+echo "  3. 创建用户组: sudo groupadd podflow (如不存在)"
+echo "  4. 启动服务: sudo systemctl enable --now podflow-collector"
+echo "  5. 验证: sudo systemctl status podflow-collector"
 echo ""
 echo "使用方式:"
-echo "  - nuts-observer 会自动检测并使用 daemon（如果可用）"
+echo "  - podflow 会自动检测并使用 daemon（如果可用）"
 echo "  - 如果 daemon 不可用，会回退到开发模式（需要 sudo）"

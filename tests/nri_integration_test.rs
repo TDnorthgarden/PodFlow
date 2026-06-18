@@ -10,10 +10,10 @@ mod nri_integration_tests {
     use tokio::time::sleep;
     use tempfile::TempDir;
 
-    use nuts_observer::collector::nri_mapping_v2::{NriEvent, NriPodEvent, NriContainerInfo};
-    use nuts_observer::collector::nri_v3::{NriV3, NriV3Config, CapacityConfig};
-    use nuts_observer::collector::nri_persist::PersistConfig;
-    use nuts_observer::collector::nri_batch::BatchProcessorConfig;
+    use podflow::collector::nri_mapping_v2::{NriEvent, NriPodEvent, NriContainerInfo};
+    use podflow::collector::nri_v3::{NriV3, NriV3Config, CapacityConfig};
+    use podflow::collector::nri_persist::PersistConfig;
+    use podflow::collector::nri_batch::BatchProcessorConfig;
 
     /// Test 1: Basic NRI V3 functionality
     #[tokio::test]

@@ -9,14 +9,14 @@
 //!
 //! 使用方式：
 //! ```rust,no_run
-//! use nuts_observer::collector::nri_v3::{NriV3, NriV3Config};
-//! use nuts_observer::types::error::NutsError;
+//! use podflow::collector::nri_v3::{NriV3, NriV3Config};
+//! use podflow::types::error::PodflowError;
 //! 
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let nri = NriV3::new(NriV3Config::default())
 //!         .await
-//!         .map_err(|e| NutsError::internal(&format!("{}: {}", "Failed to initialize NRI V3", e)))?;
+//!         .map_err(|e| PodflowError::internal(&format!("{}: {}", "Failed to initialize NRI V3", e)))?;
 //!     Ok(())
 //! }
 //! ```
@@ -469,7 +469,7 @@ pub async fn create_nri_v3_with_config(config: NriV3Config) -> Result<NriV3, Nri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::error::NutsError;
+    use crate::types::error::PodflowError;
     use crate::collector::nri_mapping_v2::{NriContainerInfo, NriPodEvent};
 
     #[tokio::test]
@@ -480,7 +480,7 @@ mod tests {
             ..Default::default()
         };
 
-        let nri = NriV3::new(config).await.map_err(|e| NutsError::internal(&format!("{}: {}", "Failed to create NRI V3", e)))?;
+        let nri = NriV3::new(config).await.map_err(|e| PodflowError::internal(&format!("{}: {}", "Failed to create NRI V3", e)))?;
 
         // 提交事件
         let event = NriEvent::AddOrUpdate(NriPodEvent {
@@ -494,7 +494,7 @@ mod tests {
             }],
         });
 
-        nri.submit_event(event).await.map_err(|e| NutsError::internal(&format!("{}: {}", "Failed to submit event", e)))?;
+        nri.submit_event(event).await.map_err(|e| PodflowError::internal(&format!("{}: {}", "Failed to submit event", e)))?;
         
         // 等待处理
         nri.flush().await;

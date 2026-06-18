@@ -32,7 +32,7 @@ pub struct UnixSocketConfig {
 impl Default for UnixSocketConfig {
     fn default() -> Self {
         Self {
-            socket_path: "/run/nuts/nri.sock".to_string(),
+            socket_path: "/run/podflow/nri.sock".to_string(),
             permissions: 0o660, // owner+group 读写权限
             backlog: 128,
             recv_buffer_size: 65536,
@@ -446,7 +446,7 @@ async fn forward_events_to_v3(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::error::NutsError;
+    use crate::types::error::PodflowError;
 
     #[test]
     fn test_nri_frame_parse() -> Result<(), Box<dyn std::error::Error>> {
@@ -460,7 +460,7 @@ mod tests {
                 assert_eq!(pod.pod_uid, "pod-123");
                 assert_eq!(pod.containers.len(), 1);
             }
-            _ => return Err(NutsError::internal("Expected AddOrUpdate event").into()),
+            _ => return Err(PodflowError::internal("Expected AddOrUpdate event").into()),
         }
         Ok(())
     }

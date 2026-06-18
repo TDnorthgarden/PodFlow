@@ -1,6 +1,6 @@
 //! Python adapters 工具测试
 //!
-//! 测试 nuts-adapters CLI 工具的功能：
+//! 测试 podflow-adapters CLI 工具的功能：
 //! 1. adapt 命令功能
 //! 2. _apply_parse 核心逻辑
 //! 3. 配置验证功能
@@ -18,13 +18,13 @@ async fn test_python_adapters_basic_functionality() {
     
     // 测试帮助信息
     let help_output = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-adapters", "--", "--help"])
+        .args(&["run", "--bin", "podflow-adapters", "--", "--help"])
         .output()
-        .expect("Failed to run nuts-adapters --help");
+        .expect("Failed to run podflow-adapters --help");
     
     assert!(help_output.status.success());
     let help_text = String::from_utf8_lossy(&help_output.stdout);
-    assert!(help_text.contains("Nuts Adapters 工具"));
+    assert!(help_text.contains("PodFlow Adapters 工具"));
     assert!(help_text.contains("adapt"));
     assert!(help_text.contains("validate"));
     assert!(help_text.contains("list-templates"));
@@ -71,7 +71,7 @@ async fn test_adapter_config_validation() {
     
     // 验证配置
     let validate_output = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-adapters", "--", "validate", "--config", config_path])
+        .args(&["run", "--bin", "podflow-adapters", "--", "validate", "--config", config_path])
         .output()
         .expect("Failed to validate adapter config");
     
@@ -92,7 +92,7 @@ async fn test_template_list_functionality() {
     
     // 列出所有模板
     let list_output = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-adapters", "--", "list-templates"])
+        .args(&["run", "--bin", "podflow-adapters", "--", "list-templates"])
         .output()
         .expect("Failed to list templates");
     
@@ -107,7 +107,7 @@ async fn test_template_list_functionality() {
     
     // 测试过滤功能
     let filter_output = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-adapters", "--", "list-templates", "--filter", "bpftrace"])
+        .args(&["run", "--bin", "podflow-adapters", "--", "list-templates", "--filter", "bpftrace"])
         .output()
         .expect("Failed to list filtered templates");
     
@@ -127,7 +127,7 @@ async fn test_template_generation() {
     
     // 生成 BPFTrace 模板
     let generate_output = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-adapters", "--", "generate-template", 
+        .args(&["run", "--bin", "podflow-adapters", "--", "generate-template", 
                 "--adapter-type", "bpftrace", "--output", template_path])
         .output()
         .expect("Failed to generate template");
@@ -224,7 +224,7 @@ async fn test_adapt_command_functionality() {
     
     // 执行 adapt 命令
     let adapt_output = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-adapters", "--", "adapt",
+        .args(&["run", "--bin", "podflow-adapters", "--", "adapt",
                 "--config", config_path,
                 "--input", input_path,
                 "--output", output_path,
@@ -318,7 +318,7 @@ async fn test_csv_input_format() {
     
     // 执行 adapt 命令
     let adapt_output = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-adapters", "--", "adapt",
+        .args(&["run", "--bin", "podflow-adapters", "--", "adapt",
                 "--config", config_path,
                 "--input", input_path,
                 "--output", output_path,
@@ -437,7 +437,7 @@ async fn test_aggregation_functionality() {
     
     // 执行 adapt 命令
     let adapt_output = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-adapters", "--", "adapt",
+        .args(&["run", "--bin", "podflow-adapters", "--", "adapt",
                 "--config", config_path,
                 "--input", input_path,
                 "--output", output_path])
@@ -580,7 +580,7 @@ async fn test_apply_parse_core_logic() {
     
     // 执行 adapt 命令
     let adapt_output = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-adapters", "--", "adapt",
+        .args(&["run", "--bin", "podflow-adapters", "--", "adapt",
                 "--config", config_path,
                 "--input", input_path,
                 "--output", output_path,

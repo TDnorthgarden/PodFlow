@@ -1,4 +1,4 @@
-# nuts-observer 配置文件
+# podflow 配置文件
 
 # 服务器配置
 server:
@@ -31,9 +31,9 @@ nri:
   # 是否启用 containerd NRI 插件
   enabled: true
   # 插件监听的 Unix Socket 路径
-  socket_path: "/var/run/nri/nuts-observer.sock"
+  socket_path: "/var/run/nri/podflow.sock"
   # 插件名称
-  plugin_name: "nuts-observer"
+  plugin_name: "podflow"
   # 插件索引 (00-99)
   plugin_idx: "00"
   # NRI 协议版本
@@ -61,7 +61,7 @@ nri:
     # 持久化配置
     persistence:
       enabled: true
-      db_path: "/var/lib/nuts-observer/nri_v3.db"
+      db_path: "/var/lib/podflow/nri_v3.db"
       snapshot_interval_secs: 300
       max_snapshots: 10
       compression: true

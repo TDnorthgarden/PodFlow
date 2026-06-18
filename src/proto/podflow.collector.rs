@@ -282,11 +282,11 @@ pub mod collector_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/nuts.collector.Collector/CollectBpftrace",
+                "/podflow.collector.Collector/CollectBpftrace",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("nuts.collector.Collector", "CollectBpftrace"));
+                .insert(GrpcMethod::new("podflow.collector.Collector", "CollectBpftrace"));
             self.inner.unary(req, path, codec).await
         }
         /// 读取/proc文件
@@ -307,11 +307,11 @@ pub mod collector_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/nuts.collector.Collector/ReadProc",
+                "/podflow.collector.Collector/ReadProc",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("nuts.collector.Collector", "ReadProc"));
+                .insert(GrpcMethod::new("podflow.collector.Collector", "ReadProc"));
             self.inner.unary(req, path, codec).await
         }
         /// 取消正在进行的采集
@@ -329,11 +329,11 @@ pub mod collector_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/nuts.collector.Collector/CancelCollection",
+                "/podflow.collector.Collector/CancelCollection",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("nuts.collector.Collector", "CancelCollection"));
+                .insert(GrpcMethod::new("podflow.collector.Collector", "CancelCollection"));
             self.inner.unary(req, path, codec).await
         }
         /// 健康检查
@@ -351,11 +351,11 @@ pub mod collector_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/nuts.collector.Collector/Health",
+                "/podflow.collector.Collector/Health",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("nuts.collector.Collector", "Health"));
+                .insert(GrpcMethod::new("podflow.collector.Collector", "Health"));
             self.inner.unary(req, path, codec).await
         }
         /// 检查权限
@@ -376,11 +376,11 @@ pub mod collector_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/nuts.collector.Collector/CheckPermission",
+                "/podflow.collector.Collector/CheckPermission",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("nuts.collector.Collector", "CheckPermission"));
+                .insert(GrpcMethod::new("podflow.collector.Collector", "CheckPermission"));
             self.inner.unary(req, path, codec).await
         }
     }
@@ -507,7 +507,7 @@ pub mod collector_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/nuts.collector.Collector/CollectBpftrace" => {
+                "/podflow.collector.Collector/CollectBpftrace" => {
                     #[allow(non_camel_case_types)]
                     struct CollectBpftraceSvc<T: Collector>(pub Arc<T>);
                     impl<T: Collector> tonic::server::UnaryService<super::CollectRequest>
@@ -550,7 +550,7 @@ pub mod collector_server {
                     };
                     Box::pin(fut)
                 }
-                "/nuts.collector.Collector/ReadProc" => {
+                "/podflow.collector.Collector/ReadProc" => {
                     #[allow(non_camel_case_types)]
                     struct ReadProcSvc<T: Collector>(pub Arc<T>);
                     impl<
@@ -595,7 +595,7 @@ pub mod collector_server {
                     };
                     Box::pin(fut)
                 }
-                "/nuts.collector.Collector/CancelCollection" => {
+                "/podflow.collector.Collector/CancelCollection" => {
                     #[allow(non_camel_case_types)]
                     struct CancelCollectionSvc<T: Collector>(pub Arc<T>);
                     impl<T: Collector> tonic::server::UnaryService<super::CancelRequest>
@@ -638,7 +638,7 @@ pub mod collector_server {
                     };
                     Box::pin(fut)
                 }
-                "/nuts.collector.Collector/Health" => {
+                "/podflow.collector.Collector/Health" => {
                     #[allow(non_camel_case_types)]
                     struct HealthSvc<T: Collector>(pub Arc<T>);
                     impl<T: Collector> tonic::server::UnaryService<super::HealthRequest>
@@ -681,7 +681,7 @@ pub mod collector_server {
                     };
                     Box::pin(fut)
                 }
-                "/nuts.collector.Collector/CheckPermission" => {
+                "/podflow.collector.Collector/CheckPermission" => {
                     #[allow(non_camel_case_types)]
                     struct CheckPermissionSvc<T: Collector>(pub Arc<T>);
                     impl<
@@ -759,7 +759,7 @@ pub mod collector_server {
         }
     }
     /// Generated gRPC service name
-    pub const SERVICE_NAME: &str = "nuts.collector.Collector";
+    pub const SERVICE_NAME: &str = "podflow.collector.Collector";
     impl<T> tonic::server::NamedService for CollectorServer<T> {
         const NAME: &'static str = SERVICE_NAME;
     }

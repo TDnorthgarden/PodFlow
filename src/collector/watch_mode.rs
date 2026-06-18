@@ -51,7 +51,7 @@ impl ContainerWatcher {
 
     /// Start watching containers with real data
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        println!("🐿️  Nuts Observer Real-time Watch Mode");
+        println!("🐿️  PodFlow Real-time Watch Mode");
         println!("{}", "─".repeat(80));
 
         let mut interval = interval(Duration::from_secs(self.config.interval_secs));

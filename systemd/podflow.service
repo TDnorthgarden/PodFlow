@@ -1,16 +1,16 @@
 [Unit]
-Description=Nuts Observer (Diagnosis HTTP API Server)
-After=network.target nuts-collector-daemon.service
-Wants=nuts-collector-daemon.service
-Documentation=https://github.com/yourorg/nuts-observer
+Description=PodFlow (Diagnosis HTTP API Server)
+After=network.target podflow-collector.service
+Wants=podflow-collector.service
+Documentation=https://github.com/TDnorthgarden/PodFlow
 
 [Service]
 Type=simple
-User=nuts
-Group=nuts
+User=podflow
+Group=podflow
 
 # 启动命令
-ExecStart=/usr/bin/nuts-observer
+ExecStart=/usr/bin/podflow
 ExecReload=/bin/kill -HUP $MAINPID
 
 # 重启策略
@@ -30,8 +30,8 @@ ProtectHostname=true
 ProtectProc=invisible
 
 # 允许读写的路径
-ReadWritePaths=/var/log/nuts /run/nuts
-ReadOnlyPaths=/etc/nuts
+ReadWritePaths=/var/log/podflow /run/podflow
+ReadOnlyPaths=/etc/podflow
 
 # 命名空间隔离
 PrivateTmp=true
@@ -51,7 +51,7 @@ TasksMax=2048
 # 日志
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=nuts-observer
+SyslogIdentifier=podflow
 
 # 环境变量
 Environment=RUST_LOG=info

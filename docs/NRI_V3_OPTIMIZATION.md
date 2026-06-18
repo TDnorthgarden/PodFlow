@@ -2,7 +2,7 @@
 
 ## 概述
 
-NRI V3 是对 nuts-observer NRI (Node Resource Interface) 模块的全面优化，解决 CI 扫描发现的所有问题：
+NRI V3 是对 podflow NRI (Node Resource Interface) 模块的全面优化，解决 CI 扫描发现的所有问题：
 
 - ✅ 数据持久化缺失
 - ✅ 并发性能瓶颈
@@ -73,8 +73,8 @@ HTTP Webhook → RwLock<HashMap> → 内存存储 → 重启丢失
 ### 方式1：一键集成（推荐）
 
 ```rust
-use nuts_observer::collector::nri_v3::{create_nri_v3, NriV3Config};
-use nuts_observer::metrics::{metrics_handler_prometheus, metrics_handler_json};
+use podflow_observer::collector::nri_v3::{create_nri_v3, NriV3Config};
+use podflow_observer::metrics::{metrics_handler_prometheus, metrics_handler_json};
 use axum::Router;
 
 #[tokio::main]
@@ -102,15 +102,15 @@ async fn main() {
 
 ```rust
 // 仅使用高性能映射表
-use nuts_observer::collector::nri_mapping_v2::NriMappingTableV2;
+use podflow_observer::collector::nri_mapping_v2::NriMappingTableV2;
 let table = NriMappingTableV2::new();
 
 // 仅使用版本控制
-use nuts_observer::collector::nri_version::EventVersionManager;
+use podflow_observer::collector::nri_version::EventVersionManager;
 let version_mgr = EventVersionManager::new();
 
 // 仅使用批量处理器
-use nuts_observer::collector::nri_batch::start_batch_processor;
+use podflow_observer::collector::nri_batch::start_batch_processor;
 let (processor, handles) = start_batch_processor(table, version_mgr, config);
 ```
 
@@ -205,7 +205,7 @@ curl http://localhost:8080/stats
 
 ```bash
 # 发送测试事件
-echo '{"event_type":"ADD","pod_uid":"test-001","pod_name":"test","namespace":"default","containers":[]}' | nc -U /tmp/nuts_nri.sock
+echo '{"event_type":"ADD","pod_uid":"test-001","pod_name":"test","namespace":"default","containers":[]}' | nc -U /tmp/podflow_nri.sock
 ```
 
 ## 运行示例
@@ -226,7 +226,7 @@ curl http://localhost:8080/metrics
 ```rust
 NriV3Config {
     persistence: PersistConfig {
-        db_path: "/var/lib/nuts/nri.db".to_string(),
+        db_path: "/var/lib/podflow/nri.db".to_string(),
         snapshot_interval_secs: 300,
         ..Default::default()
     },
@@ -265,13 +265,13 @@ tonic = { version = "0.12", features = ["tls"] }  # gRPC
 
 **原代码：**
 ```rust
-use nuts_observer::collector::nri_mapping::NriMappingTable;
+use podflow_observer::collector::nri_mapping::NriMappingTable;
 let table = Arc::new(NriMappingTable::new());
 ```
 
 **新代码：**
 ```rust
-use nuts_observer::collector::nri_v3::create_nri_v3;
+use podflow_observer::collector::nri_v3::create_nri_v3;
 let nri = create_nri_v3().await.unwrap();
 let table = nri.table();
 ```
@@ -290,10 +290,10 @@ app = app.merge(nri_router(table));
 ### 问题：Unix Socket 权限拒绝
 ```bash
 # 检查权限
-ls -la /run/nuts/nri.sock
+ls -la /run/podflow/nri.sock
 
 # 修复
-sudo chmod 666 /run/nuts/nri.sock
+sudo chmod 666 /run/podflow/nri.sock
 ```
 
 ### 问题：持久化恢复失败

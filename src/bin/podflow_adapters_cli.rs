@@ -1,4 +1,4 @@
-//! Nuts Adapters CLI - Python adapters 工具
+//! PodFlow Adapters CLI - Python adapters 工具
 //!
 //! 此二进制文件专门用于处理 Python adapters，包括：
 //! - adapt 命令：应用 adapter 配置转换数据
@@ -11,10 +11,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::process::Command;
 
-/// Nuts Adapters CLI - Python adapters 工具
+/// PodFlow Adapters CLI - Python adapters 工具
 #[derive(Parser)]
-#[command(name = "nuts-adapters")]
-#[command(about = "Nuts Adapters 工具 - 处理 Python adapters 和数据转换")]
+#[command(name = "podflow-adapters")]
+#[command(about = "PodFlow Adapters 工具 - 处理 Python adapters 和数据转换")]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]

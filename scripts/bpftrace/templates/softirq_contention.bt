@@ -1,6 +1,6 @@
 #!/usr/bin/env bpftrace
 /*
- * Nuts-Observer Standard SoftIRQ Contention Probe
+ * PodFlow Standard SoftIRQ Contention Probe
  * 标准软中断争用采集脚本 - 符合 bpftrace_output_standard v0.1
  *
  * Evidence Type: softirq_contention

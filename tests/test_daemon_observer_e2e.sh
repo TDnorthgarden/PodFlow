@@ -1,12 +1,12 @@
 #!/bin/bash
 # Daemon 与 Observer 端到端调用测试
-# 验证 nuts-observer 通过 collector_client 调用 nuts-collector-daemon
+# 验证 podflow 通过 collector_client 调用 podflow-collector
 
 set -e
 
-NUTS_DIR="/root/nuts"
-DAEMON_BIN="$NUTS_DIR/target/release/nuts-collector-daemon"
-OBSERVER_BIN="$NUTS_DIR/target/release/nuts-observer"
+PODFLOW_DIR="/root/podflow"
+DAEMON_BIN="$PODFLOW_DIR/target/release/podflow-collector"
+OBSERVER_BIN="$PODFLOW_DIR/target/release/podflow"
 SOCKET_PATH="/tmp/e2e-test.sock"
 DAEMON_LOG="/tmp/e2e-daemon.log"
 
@@ -30,19 +30,19 @@ trap cleanup EXIT
 # 测试1: 检查两个二进制都存在
 echo "【测试1】验证二进制文件..."
 if [ ! -f "$DAEMON_BIN" ]; then
-    echo "  ✗ nuts-collector-daemon 不存在"
+    echo "  ✗ podflow-collector 不存在"
     exit 1
 fi
 if [ ! -f "$OBSERVER_BIN" ]; then
-    echo "  ✗ nuts-observer 不存在"
+    echo "  ✗ podflow 不存在"
     exit 1
 fi
-echo "  ✓ nuts-collector-daemon: $DAEMON_BIN"
-echo "  ✓ nuts-observer: $OBSERVER_BIN"
+echo "  ✓ podflow-collector: $DAEMON_BIN"
+echo "  ✓ podflow: $OBSERVER_BIN"
 echo ""
 
 # 测试2: 启动 daemon
-echo "【测试2】启动 nuts-collector-daemon..."
+echo "【测试2】启动 podflow-collector..."
 sudo rm -f "$SOCKET_PATH"
 sudo "$DAEMON_BIN" "$SOCKET_PATH" > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
@@ -64,7 +64,7 @@ fi
 echo "  ✓ Daemon 运行中，Socket: $SOCKET_PATH"
 echo ""
 
-# 测试3: 检查 socket 权限（nuts-observer 需要能访问）
+# 测试3: 检查 socket 权限（podflow 需要能访问）
 echo "【测试3】验证 Socket 可访问性..."
 PERM=$(sudo stat -c '%a' "$SOCKET_PATH")
 OWNER=$(sudo stat -c '%U' "$SOCKET_PATH")
@@ -83,7 +83,7 @@ echo ""
 
 # 测试4: 检查客户端代码结构
 echo "【测试4】验证客户端调用接口..."
-CLIENT_FILE="$NUTS_DIR/src/collector/collector_client.rs"
+CLIENT_FILE="$PODFLOW_DIR/src/collector/collector_client.rs"
 
 # 检查关键方法
 if grep -q "pub async fn connect" "$CLIENT_FILE"; then
@@ -122,8 +122,8 @@ echo ""
 # 测试6: 开发模式回退测试（当前实际使用的方式）
 echo "【测试6】测试开发模式回退（当前实际采集方式）..."
 echo "  当前架构状态:"
-echo "    - nuts-collector-daemon: 运行中（特权组件）"
-echo "    - nuts-observer: 使用 AutoFallbackCollector"
+echo "    - podflow-collector: 运行中（特权组件）"
+echo "    - podflow: 使用 AutoFallbackCollector"
 echo "    - 采集方式: 开发模式回退（直接 sudo bpftrace）"
 echo ""
 echo "  ⚠️ 注意: 当前客户端使用简化实现，直接执行 bpftrace"
@@ -131,9 +131,9 @@ echo "     gRPC over Unix Socket 完整实现待后续完善"
 echo ""
 
 # 测试7: 验证 observer 子命令
-echo "【测试7】验证 nuts-observer CLI 命令..."
+echo "【测试7】验证 podflow CLI 命令..."
 if "$OBSERVER_BIN" --help &>/dev/null; then
-    echo "  ✓ nuts-observer 可执行"
+    echo "  ✓ podflow 可执行"
     
     # 检查是否有 trigger 命令
     if "$OBSERVER_BIN" trigger --help 2>&1 | grep -q "trigger"; then
@@ -145,7 +145,7 @@ if "$OBSERVER_BIN" --help &>/dev/null; then
         echo "  ✓ status 子命令存在"
     fi
 else
-    echo "  ✗ nuts-observer 执行失败"
+    echo "  ✗ podflow 执行失败"
 fi
 echo ""
 
@@ -154,7 +154,7 @@ echo "【测试8】架构集成状态报告..."
 echo "  ┌─────────────────────────────────────────────────────────┐"
 echo "  │  特权分离架构当前状态                                   │"
 echo "  ├─────────────────────────────────────────────────────────┤"
-echo "  │  nuts-collector-daemon (特权)                          │"
+echo "  │  podflow-collector (特权)                          │"
 echo "  │    ✓ PID: $DAEMON_PID                                     │"
 echo "  │    ✓ Socket: $SOCKET_PATH                    │"
 echo "  │    ✓ Capabilities: CAP_BPF, CAP_SYS_ADMIN, etc.      │"
@@ -164,7 +164,7 @@ echo "  │    ✓ Socket 创建: OK                                   │"
 echo "  │    ✓ 权限设置: 660 (rw-rw----)                         │"
 echo "  │    ⚠️ 完整 gRPC 连接: 待完善（简化实现）              │"
 echo "  ├─────────────────────────────────────────────────────────┤"
-echo "  │  nuts-observer (非特权客户端)                            │"
+echo "  │  podflow (非特权客户端)                            │"
 echo "  │    ✓ 二进制就绪                                        │"
 echo "  │    ✓ AutoFallbackCollector 实现                      │"
 echo "  │    ✓ 当前使用: 开发模式（直接 sudo bpftrace）        │"
@@ -174,7 +174,7 @@ echo ""
 # 测试9: 提供完整的端到端调用示例
 echo "【测试9】端到端调用链路示例..."
 echo "  完整的调用流程（当前实现）:"
-echo "  1. nuts-observer CLI 接收命令"
+echo "  1. podflow CLI 接收命令"
 echo "     └─> trigger/query/status"
 echo ""
 echo "  2. 诊断引擎处理请求"
@@ -189,10 +189,10 @@ echo "     └─> Evidence 结构体"
 echo ""
 echo "  未来完整架构（daemon 模式）:"
 echo "  3. 采集器模块执行（daemon 模式）"
-echo "     └─> CollectorClient.connect('/run/nuts/collector.sock')"
+echo "     └─> CollectorClient.connect('/run/podflow/collector.sock')"
 echo "         └─> gRPC CollectBpftrace()"
-echo "             └─> nuts-collector-daemon 执行 bpftrace"
-echo "                 └─> 返回结果给 nuts-observer"
+echo "             └─> podflow-collector 执行 bpftrace"
+echo "                 └─> 返回结果给 podflow"
 echo ""
 
 echo "=========================================="
@@ -202,19 +202,19 @@ echo ""
 echo "📋 实际调用验证命令（手动执行）:"
 echo ""
 echo "1. 启动 daemon（如未运行）:"
-echo "   sudo systemctl start nuts-collector-daemon"
+echo "   sudo systemctl start podflow-collector"
 echo "   或: sudo $DAEMON_BIN /tmp/manual.sock"
 echo ""
-echo "2. 使用 nuts-observer 触发诊断（当前使用开发模式）:"
+echo "2. 使用 podflow 触发诊断（当前使用开发模式）:"
 echo "   $OBSERVER_BIN trigger --help"
 echo "   $OBSERVER_BIN status"
 echo ""
 echo "3. 查看完整的架构文档:"
-echo "   cat $NUTS_DIR/docs/12_privilege_separation_arch.md"
+echo "   cat $PODFLOW_DIR/docs/12_privilege_separation_arch.md"
 echo ""
 echo "4. 检查 collector_client 实现:"
-echo "   grep -A5 'impl AutoFallbackCollector' $NUTS_DIR/src/collector/collector_client.rs"
+echo "   grep -A5 'impl AutoFallbackCollector' $PODFLOW_DIR/src/collector/collector_client.rs"
 echo ""
 echo "5. 实际 bpftrace 采集测试（开发模式）:"
-echo "   sudo bpftrace $NUTS_DIR/scripts/bpftrace/templates/network_latency.bt -c 'sleep 1'"
+echo "   sudo bpftrace $PODFLOW_DIR/scripts/bpftrace/templates/network_latency.bt -c 'sleep 1'"
 echo ""

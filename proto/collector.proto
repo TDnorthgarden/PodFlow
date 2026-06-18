@@ -1,5 +1,5 @@
 syntax = "proto3";
-package nuts.collector;
+package podflow.collector;
 
 // 采集请求
 message CollectRequest {

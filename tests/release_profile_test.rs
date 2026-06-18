@@ -169,9 +169,9 @@ impl ReleaseProfileTestSuite {
 
         let release_dir = format!("{}/target/release", self.project_root);
         let expected_binaries = vec![
-            "nuts-observer",
-            "nuts-adapters",
-            "nuts-collector-daemon",
+            "podflow",
+            "podflow-adapters",
+            "podflow-collector",
         ];
 
         for binary in expected_binaries {
@@ -244,7 +244,7 @@ impl ReleaseProfileTestSuite {
         println!("⚡ 验证优化级别...");
 
         let release_dir = format!("{}/target/release", self.project_root);
-        let binary_path = format!("{}/nuts-observer", release_dir);
+        let binary_path = format!("{}/podflow", release_dir);
 
         if Path::new(&binary_path).exists() {
             // 使用 objdump 检查优化标记
@@ -307,7 +307,7 @@ impl ReleaseProfileTestSuite {
         println!("🐛 验证调试信息移除...");
 
         let release_dir = format!("{}/target/release", self.project_root);
-        let binary_path = format!("{}/nuts-observer", release_dir);
+        let binary_path = format!("{}/podflow", release_dir);
 
         if Path::new(&binary_path).exists() {
             // 检查调试信息大小
@@ -509,7 +509,7 @@ impl ReleaseProfileTestSuite {
         println!("🔒 验证安全加固...");
 
         let release_dir = format!("{}/target/release", self.project_root);
-        let binary_path = format!("{}/nuts-observer", release_dir);
+        let binary_path = format!("{}/podflow", release_dir);
 
         if Path::new(&binary_path).exists() {
             // 检查 RELRO (Relocation Read-Only)
@@ -657,7 +657,7 @@ mod release_profile_tests {
         test_suite.compile_release_profile().await.expect("Release compilation failed");
         
         // 验证二进制文件存在
-        assert!(Path::new("./target/release/nuts-observer").exists());
+        assert!(Path::new("./target/release/podflow").exists());
     }
 
     /// 二进制验证测试

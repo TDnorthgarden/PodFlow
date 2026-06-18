@@ -15,7 +15,7 @@ use std::path::Path;
 use std::process::Command;
 
 // 引入被测模块
-use nuts_observer::config::Config;
+use podflow::config::Config;
 
 /// 安全审计结果
 #[derive(Debug, Clone)]
@@ -326,8 +326,8 @@ impl SecurityAuditTestSuite {
         // 检查配置文件中的敏感信息
         let config_files = vec![
             "config.yaml",
-            "/etc/nuts/config.yaml",
-            "/tmp/nuts-config.yaml",
+            "/etc/podflow/config.yaml",
+            "/tmp/podflow-config.yaml",
         ];
 
         for config_file in config_files {
@@ -523,8 +523,8 @@ impl SecurityAuditTestSuite {
 
         // 检查 TLS 证书配置
         let cert_files = vec![
-            "/etc/ssl/certs/nuts-server.crt",
-            "/etc/ssl/private/nuts-server.key",
+            "/etc/ssl/certs/podflow-server.crt",
+            "/etc/ssl/private/podflow-server.key",
         ];
 
         for cert_file in cert_files {
@@ -628,9 +628,9 @@ impl SecurityAuditTestSuite {
         println!("📝 审计日志文件权限...");
 
         let log_files = vec![
-            "/var/log/nuts.log",
-            "/var/log/nuts-access.log",
-            "/var/log/nuts-error.log",
+            "/var/log/podflow.log",
+            "/var/log/podflow-access.log",
+            "/var/log/podflow-error.log",
         ];
 
         for log_file in log_files {

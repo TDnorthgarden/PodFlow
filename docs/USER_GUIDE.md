@@ -1,4 +1,4 @@
-# Nuts Observer 用户指南
+# PodFlow 用户指南
 
 ## 目录
 - [快速开始](#快速开始)
@@ -13,23 +13,23 @@
 ### 安装
 ```bash
 # 从源码构建
-git clone https://github.com/your-org/nuts-observer.git
-cd nuts-observer
+git clone https://github.com/your-org/podflow.git
+cd podflow
 cargo build --release
-sudo cp target/release/nuts-observer /usr/local/bin/
+sudo cp target/release/podflow /usr/local/bin/
 
 # 使用包管理器安装（如果提供）
-sudo yum install nuts-observer  # RHEL/CentOS
-sudo apt install nuts-observer  # Ubuntu/Debian
+sudo yum install podflow  # RHEL/CentOS
+sudo apt install podflow  # Ubuntu/Debian
 ```
 
 ### 快速验证
 ```bash
 # 检查安装
-nuts-observer --help
+podflow --help
 
 # 检查系统状态
-nuts-observer status
+podflow status
 ```
 
 ## 基本概念
@@ -57,7 +57,7 @@ nuts-observer status
 
 ### 基本命令结构
 ```bash
-nuts-observer [GLOBAL_OPTIONS] <SUBCOMMAND> [SUBCOMMAND_OPTIONS]
+podflow [GLOBAL_OPTIONS] <SUBCOMMAND> [SUBCOMMAND_OPTIONS]
 ```
 
 ### 全局选项
@@ -70,52 +70,52 @@ nuts-observer [GLOBAL_OPTIONS] <SUBCOMMAND> [SUBCOMMAND_OPTIONS]
 #### 诊断命令
 ```bash
 # 手动触发诊断
-nuts-observer trigger --pod-uid <uid> --namespace <ns>
+podflow trigger --pod-uid <uid> --namespace <ns>
 
 # 持续监控
-nuts-observer watch --pod-uid <uid> --interval 5 --count 10
+podflow watch --pod-uid <uid> --interval 5 --count 10
 
 # 查询诊断结果
-nuts-observer query --task-id <task-id>
+podflow query --task-id <task-id>
 
 # 查看服务状态
-nuts-observer status
+podflow status
 ```
 
 #### 配置管理
 ```bash
 # 列出诊断规则
-nuts-observer config list-rules
+podflow config list-rules
 
 # 添加诊断规则
-nuts-observer config set-rule --rule-id cpu-high --metric-name cpu_usage --operator ">" --threshold 80
+podflow config set-rule --rule-id cpu-high --metric-name cpu_usage --operator ">" --threshold 80
 
 # 导出规则配置
-nuts-observer config export --file backup-rules.yaml
+podflow config export --file backup-rules.yaml
 ```
 
 #### 案例库管理
 ```bash
 # 列出所有案例
-nuts-observer case list
+podflow case list
 
 # 查看案例详情
-nuts-observer case show --case-id <case-id>
+podflow case show --case-id <case-id>
 
 # 根据指标匹配案例
-nuts-observer case match --metrics "cpu_usage=85,memory_usage=90"
+podflow case match --metrics "cpu_usage=85,memory_usage=90"
 
 # 导出案例库
-nuts-observer case export --file cases-backup.yaml
+podflow case export --file cases-backup.yaml
 ```
 
 #### Pod管理
 ```bash
 # 列出集群中的Pod
-nuts-observer list-pods --namespace default
+podflow list-pods --namespace default
 
 # 导出Pod列表
-nuts-observer export --file pods.json
+podflow export --file pods.json
 ```
 
 ### 输出格式
@@ -172,30 +172,30 @@ A: 推荐使用DaemonSet方式部署：
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: nuts-observer
+  name: podflow
   namespace: monitoring
 spec:
   selector:
     matchLabels:
-      name: nuts-observer
+      name: podflow
   template:
     metadata:
       labels:
-        name: nuts-observer
+        name: podflow
     spec:
       containers:
-      - name: nuts-observer
-        image: nuts-observer:latest
+      - name: podflow
+        image: podflow:latest
         securityContext:
           privileged: true
         volumeMounts:
           - name: host-filesystem
             mountPath: /host
         env:
-          - name: NUTS_LOG_LEVEL
+          - name: PODFLOW_LOG_LEVEL
             value: "info"
-          - name: NUTS_SERVER
-            value: "http://nuts-api:8080"
+          - name: PODFLOW_SERVER
+            value: "http://podflow-api:8080"
       volumes:
       - name: host-filesystem
         hostPath: /
@@ -206,7 +206,7 @@ A: 确保以下权限：
 
 ```bash
 # 检查当前用户
-id nuts-observer
+id podflow
 
 # 添加必要的权限
 sudo usermod -a -G bpf $USER
@@ -220,11 +220,11 @@ A: 通过环境变量或配置文件：
 
 ```bash
 # 环境变量方式
-export NUTS_LOG_LEVEL=debug
-export NUTS_LOG_FORMAT=json
+export PODFLOW_LOG_LEVEL=debug
+export PODFLOW_LOG_FORMAT=json
 
 # 配置文件方式
-cat > /etc/nuts/config.yaml << EOF
+cat > /etc/podflow/config.yaml << EOF
 log_level: "debug"
 output_format: "json"
 EOF
@@ -242,10 +242,10 @@ A: 检查以下几点：
 
 ```bash
 # 调试模式运行
-nuts-observer trigger --pod-uid abc123 --log-level debug
+podflow trigger --pod-uid abc123 --log-level debug
 
 # 检查详细状态
-nuts-observer status --verbose
+podflow status --verbose
 ```
 
 #### Q: 误报率较高怎么办？
@@ -258,10 +258,10 @@ A: 优化策略：
 
 ```bash
 # 查看当前规则
-nuts-observer config list-rules
+podflow config list-rules
 
 # 调整阈值
-nuts-observer config set-rule --rule-id cpu-high --threshold 85
+podflow config set-rule --rule-id cpu-high --threshold 85
 ```
 
 #### Q: 性能影响较大？
@@ -310,10 +310,10 @@ Error: Out of memory
 #### 关键日志位置
 ```bash
 # 系统日志
-journalctl -u nuts-observer -f
+journalctl -u podflow -f
 
 # 应用日志
-/var/log/nuts/observer.log
+/var/log/podflow/observer.log
 
 # NRI日志
 /var/log/nri/nri.log
@@ -399,10 +399,10 @@ alerts:
 ```bash
 #!/bin/bash
 # 健康检查脚本
-check_nuts_health() {
+check_podflow_health() {
     # 检查进程状态
-    if ! pgrep -f "nuts-observer" > /dev/null; then
-        echo "ERROR: nuts-observer process not found"
+    if ! pgrep -f "podflow" > /dev/null; then
+        echo "ERROR: podflow process not found"
         return 1
     fi
     
@@ -412,13 +412,13 @@ check_nuts_health() {
         return 1
     fi
     
-    echo "OK: nuts-observer is healthy"
+    echo "OK: podflow is healthy"
     return 0
 }
 
 # 定期执行健康检查
 while true; do
-    check_nuts_health
+    check_podflow_health
     sleep 30
 done
 ```
@@ -429,7 +429,7 @@ done
 logging:
   level: info
   file:
-    path: /var/log/nuts/observer.log
+    path: /var/log/podflow/observer.log
     max_size: 100MB
     max_files: 5
     rotation: daily
@@ -439,21 +439,21 @@ logging:
 #### 3. 性能监控
 ```bash
 # 性能监控脚本
-monitor_nuts_performance() {
+monitor_podflow_performance() {
     # CPU使用率
-    cpu_usage=$(ps -p $(pgrep -f nuts-observer) -o %cpu | awk '{sum+=$1} END {print sum}')
+    cpu_usage=$(ps -p $(pgrep -f podflow) -o %cpu | awk '{sum+=$1} END {print sum}')
     
     # 内存使用
-    memory_usage=$(ps -p $(pgrep -f nuts-observer) -o %mem | awk '{sum+=$1} END {print sum}')
+    memory_usage=$(ps -p $(pgrep -f podflow) -o %mem | awk '{sum+=$1} END {print sum}')
     
     # 文件描述符
-    fd_count=$(lsof -p $(pgrep -f nuts-observer) | wc -l)
+    fd_count=$(lsof -p $(pgrep -f podflow) | wc -l)
     
     echo "CPU: ${cpu_usage}%, Memory: ${memory_usage}%, FDs: ${fd_count}"
 }
 
 # 添加到crontab
-# */5 * * * * /usr/local/bin/monitor_nuts_performance >> /var/log/nuts-monitor.log
+# */5 * * * * /usr/local/bin/monitor_podflow_performance >> /var/log/podflow-monitor.log
 ```
 
 ## API参考
@@ -508,7 +508,7 @@ Response:
 
 ### 当前版本
 ```bash
-nuts-observer --version
+podflow --version
 ```
 
 ### 版本兼容性
@@ -527,9 +527,9 @@ nuts-observer --version
 
 ## 获取帮助
 
-- **GitHub Issues**: https://github.com/your-org/nuts-observer/issues
-- **文档**: https://github.com/your-org/nuts-observer/docs
-- **社区**: https://github.com/your-org/nuts-observer/discussions
+- **GitHub Issues**: https://github.com/your-org/podflow/issues
+- **文档**: https://github.com/your-org/podflow/docs
+- **社区**: https://github.com/your-org/podflow/discussions
 
 ## 许可证
 

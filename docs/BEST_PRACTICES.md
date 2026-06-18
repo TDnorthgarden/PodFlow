@@ -1,4 +1,4 @@
-# Nuts Observer 最佳实践指南
+# PodFlow 最佳实践指南
 
 ## 目录
 - [生产部署](#生产部署)
@@ -16,21 +16,21 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: nuts-observer
+  name: podflow
   namespace: monitoring
   labels:
-    app: nuts-observer
+    app: podflow
     version: v0.1.0
 spec:
   selector:
     matchLabels:
-      name: nuts-observer
+      name: podflow
   template:
     metadata:
       labels:
-        name: nuts-observer
+        name: podflow
     spec:
-      serviceAccountName: nuts-observer
+      serviceAccountName: podflow
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
@@ -40,8 +40,8 @@ spec:
             - SYS_ADMIN
             - SYS_RESOURCE
       containers:
-      - name: nuts-observer
-        image: nuts-observer:v0.1.0
+      - name: podflow
+        image: podflow:v0.1.0
         imagePullPolicy: IfNotPresent
         resources:
           requests:
@@ -51,28 +51,28 @@ spec:
             cpu: 500m
             memory: 512Mi
         env:
-        - name: NUTS_LOG_LEVEL
+        - name: PODFLOW_LOG_LEVEL
           value: "info"
-        - name: NUTS_SERVER
-          value: "http://nuts-api:8080"
+        - name: PODFLOW_SERVER
+          value: "http://podflow-api:8080"
         volumeMounts:
         - name: host-filesystem
           mountPath: /host
         - name: config-volume
-          mountPath: /etc/nuts
+          mountPath: /etc/podflow
         - name: log-volume
-          mountPath: /var/log/nuts
+          mountPath: /var/log/podflow
       volumes:
       - name: config-volume
         configMap:
-          name: nuts-config
+          name: podflow-config
       - name: host-filesystem
           hostPath:
             path: /
             type: Directory
       - name: log-volume
         hostPath:
-            path: /var/log/nuts
+            path: /var/log/podflow
             type: DirectoryOrCreate
   updateStrategy:
     type: RollingUpdate
@@ -101,7 +101,7 @@ resources:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: nuts-observer
+  name: podflow
   namespace: monitoring
 spec:
   replicas: 3  # 根据集群节点数量调整
@@ -117,7 +117,7 @@ spec:
                 - key: kubernetes.io/hostname
                   operator: NotIn
                   values:
-                    - nuts-observer  # 避免同一节点部署多个实例
+                    - podflow  # 避免同一节点部署多个实例
 ```
 
 #### 健康检查配置
@@ -455,7 +455,7 @@ security:
   
   # 用户配置
   user:
-    name: "nuts-observer"
+    name: "podflow"
     uid: 1000
     gid: 1000
     no_shell: true
@@ -479,9 +479,9 @@ network_security:
   # TLS配置
   tls:
     enabled: true
-    cert_file: "/etc/nuts/cert.pem"
-    key_file: "/etc/nuts/key.pem"
-    ca_file: "/etc/nuts/ca.pem"
+    cert_file: "/etc/podflow/cert.pem"
+    key_file: "/etc/podflow/key.pem"
+    ca_file: "/etc/podflow/ca.pem"
 ```
 
 ### 2. 数据安全
@@ -534,7 +534,7 @@ audit:
   reports:
     generation: "daily"
     format: "json"
-    storage: "/var/log/nuts/audit"
+    storage: "/var/log/podflow/audit"
     encryption: true
 ```
 
@@ -602,24 +602,24 @@ alert_rules:
 ```json
 {
   "dashboard": {
-    "title": "Nuts Observer Monitoring",
+    "title": "PodFlow Monitoring",
     "panels": [
       {
         "title": "CPU Usage",
         "type": "stat",
-        "targets": ["nuts-observer:8080"],
+        "targets": ["podflow:8080"],
         "metrics": ["cpu_usage_percent"]
       },
       {
         "title": "Memory Usage",
         "type": "stat",
-        "targets": ["nuts-observer:8080"],
+        "targets": ["podflow:8080"],
         "metrics": ["memory_usage_percent"]
       },
       {
         "title": "Network Latency",
         "type": "graph",
-        "targets": ["nuts-observer:8080"],
+        "targets": ["podflow:8080"],
         "metrics": ["network_latency_p99"]
       }
     ]
@@ -693,7 +693,7 @@ rolling_upgrade:
 
 ## 总结
 
-本最佳实践指南涵盖了Nuts Observer在生产环境中的关键配置和运维策略，包括：
+本最佳实践指南涵盖了PodFlow在生产环境中的关键配置和运维策略，包括：
 
 1. **生产部署**: 容器化部署、高可用配置、健康检查
 2. **性能优化**: 采集调优、内存管理、并发处理、存储优化
@@ -702,4 +702,4 @@ rolling_upgrade:
 5. **安全配置**: 权限控制、数据保护、审计日志
 6. **运维监控**: 关键指标、仪表板配置、版本管理
 
-遵循这些最佳实践可以确保Nuts Observer在生产环境中稳定、高效、安全地运行。
+遵循这些最佳实践可以确保PodFlow在生产环境中稳定、高效、安全地运行。

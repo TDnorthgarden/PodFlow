@@ -1,8 +1,8 @@
-# Nuts Observer 高级诊断规则使用指南
+# PodFlow 高级诊断规则使用指南
 
 ## 概述
 
-Nuts Observer 提供四层诊断规则架构，支持从简单阈值到复杂预测分析的多种诊断能力：
+PodFlow 提供四层诊断规则架构，支持从简单阈值到复杂预测分析的多种诊断能力：
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -492,7 +492,7 @@ cargo test diagnosis
 ./scripts/test_advanced_rules.sh
 
 # 完整集成测试
-cargo test --bin nuts-observer
+cargo test --bin podflow
 ```
 
 ---
@@ -535,5 +535,5 @@ cargo test --bin nuts-observer
 ## 版本信息
 
 - **文档版本**: 1.0
-- **适用版本**: nuts-observer >= 0.3.0
+- **适用版本**: podflow >= 0.3.0
 - **最后更新**: 2026-04-24

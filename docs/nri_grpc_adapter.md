@@ -11,14 +11,14 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                        当前实现 (HTTP)                        │
 ├─────────────────────────────────────────────────────────────┤
-│  Container Runtime ──> NRI Plugin ──> HTTP POST ──> nuts     │
+│  Container Runtime ──> NRI Plugin ──> HTTP POST ──> podflow     │
 │                              (Webhook 端口 8080)              │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
 │                      真实 NRI (gRPC/Unix Socket)              │
 ├─────────────────────────────────────────────────────────────┤
-│  Container Runtime ──> NRI Plugin ──> gRPC/UnixSocket ──> nuts│
+│  Container Runtime ──> NRI Plugin ──> gRPC/UnixSocket ──> podflow│
 │                              (本地高效通信)                    │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -124,7 +124,7 @@ impl Nri for NriGrpcService {
         
         Ok(Response::new(RegistrationResponse {
             accepted: true,
-            message: "nuts-observer NRI adapter ready".to_string(),
+            message: "podflow NRI adapter ready".to_string(),
         }))
     }
     
@@ -211,13 +211,13 @@ impl NriAdapter {
     }
 }
 
-/// 配置示例 (nuts.yaml)
+/// 配置示例 (podflow.yaml)
 /// 
 /// ```yaml
 /// nri:
 ///   mode: unix_socket  # http | unix_socket | grpc
 ///   http_port: 8080    # mode=http 时使用
-///   socket_path: /run/nuts/nri.sock  # mode=unix_socket 时使用
+///   socket_path: /run/podflow/nri.sock  # mode=unix_socket 时使用
 ///   grpc_addr: 0.0.0.0:50051  # mode=grpc 时使用
 /// ```
 ```
@@ -229,7 +229,7 @@ impl NriAdapter {
 | 开发/测试 | HTTP | 调试方便，无需 root |
 | 生产单节点 | Unix Socket | 最低延迟，无网络栈开销 |
 | 生产多节点 | gRPC | 支持 NRI 标准协议，可跨节点 |
-| Kubernetes | Unix Socket + DaemonSet | 每个节点部署 nuts-observer |
+| Kubernetes | Unix Socket + DaemonSet | 每个节点部署 podflow |
 
 ## 实现优先级
 

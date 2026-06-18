@@ -1,12 +1,12 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use nuts_observer::diagnosis::{
+use podflow::diagnosis::{
     DiagnosisEngine, DiagnosisEngineConfig, RuleManager, TrendRule, TrendRuleConfig,
 };
-use nuts_observer::types::diagnosis::{DiagnosisResult, Conclusion, Severity};
-use nuts_observer::types::evidence::{Evidence, CollectionMeta, TimeWindow, Scope, Attribution};
-use nuts_observer::publisher::alert_adapter::AlertRouter;
-use nuts_observer::collector::nri_batch::{BatchProcessor, BatchConfig};
-use nuts_observer::collector::nri_v3::NriV3Processor;
+use podflow::types::diagnosis::{DiagnosisResult, Conclusion, Severity};
+use podflow::types::evidence::{Evidence, CollectionMeta, TimeWindow, Scope, Attribution};
+use podflow::publisher::alert_adapter::AlertRouter;
+use podflow::collector::nri_batch::{BatchProcessor, BatchConfig};
+use podflow::collector::nri_v3::NriV3Processor;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

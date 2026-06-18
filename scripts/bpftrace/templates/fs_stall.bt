@@ -1,6 +1,6 @@
 #!/usr/bin/env bpftrace
 /*
- * Nuts-Observer Filesystem Stall Probe
+ * PodFlow Filesystem Stall Probe
  * 文件系统延迟采集脚本 - 符合 bpftrace_output_standard v0.1
  * 
  * Evidence Type: fs_stall

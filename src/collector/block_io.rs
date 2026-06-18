@@ -1,7 +1,7 @@
 use crate::types::evidence::*;
 use crate::collector::nri_mapping_v2::NriMappingTableV2;
 use crate::collector::nri_mapping_v2::AttributionSource;
-use crate::types::error::NutsError;
+use crate::types::error::PodflowError;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -55,7 +55,7 @@ fn make_evidence_id(task_id: &str, evidence_type: &str, collection_id: &str, sco
 }
 
 /// 运行真实的 bpftrace block_io 采集（第 1 周 PoC）
-pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Result<Evidence, NutsError> {
+pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Result<Evidence, PodflowError> {
     let scope_key = make_scope_key(
         cfg.pod.as_ref().and_then(|p| p.uid.as_deref()),
         cfg.cgroup_id.as_deref(),
@@ -101,7 +101,7 @@ pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Result<Evidence,
     {
         Ok(c) => c,
         Err(e) => {
-            let mut errors_guard = errors.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+            let mut errors_guard = errors.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
             errors_guard.push(CollectionError {
                 code: "BPFTRACE_SCRIPT_LOAD_FAILED".into(),
                 message: format!("Failed to start bpftrace: {}", e),
@@ -114,26 +114,26 @@ pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Result<Evidence,
                 match Arc::try_unwrap(latencies) {
                     Ok(mutex) => match mutex.into_inner() {
                         Ok(value) => value,
-                        Err(_) => return Err(NutsError::lock_error("Failed to get inner value from mutex")),
+                        Err(_) => return Err(PodflowError::lock_error("Failed to get inner value from mutex")),
                     },
-                    Err(_) => return Err(NutsError::internal("Failed to unwrap Arc")),
+                    Err(_) => return Err(PodflowError::internal("Failed to unwrap Arc")),
                 },
-                *bytes_total.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?,
-                *io_count.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?,
-                *timeout_count.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?,
+                *bytes_total.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?,
+                *io_count.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?,
+                *timeout_count.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?,
                 match Arc::try_unwrap(events) {
                     Ok(mutex) => match mutex.into_inner() {
                         Ok(value) => value,
-                        Err(_) => return Err(NutsError::lock_error("Failed to get inner value from mutex")),
+                        Err(_) => return Err(PodflowError::lock_error("Failed to get inner value from mutex")),
                     },
-                    Err(_) => return Err(NutsError::internal("Failed to unwrap Arc")),
+                    Err(_) => return Err(PodflowError::internal("Failed to unwrap Arc")),
                 },
                 match Arc::try_unwrap(errors) {
                     Ok(mutex) => match mutex.into_inner() {
                         Ok(value) => value,
-                        Err(_) => return Err(NutsError::lock_error("Failed to get inner value from mutex")),
+                        Err(_) => return Err(PodflowError::lock_error("Failed to get inner value from mutex")),
                     },
-                    Err(_) => return Err(NutsError::internal("Failed to unwrap Arc")),
+                    Err(_) => return Err(PodflowError::internal("Failed to unwrap Arc")),
                 },
                 "failed",
             ));
@@ -142,7 +142,7 @@ pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Result<Evidence,
     
     let stdout = match child.stdout.take() {
         Some(stdout) => stdout,
-        None => return Err(NutsError::internal("Failed to capture stdout from bpftrace process")),
+        None => return Err(PodflowError::internal("Failed to capture stdout from bpftrace process")),
     };
     let reader = BufReader::new(stdout);
     
@@ -166,24 +166,24 @@ pub fn run_block_io_collect_poc(cfg: BlockIoCollectorConfig) -> Result<Evidence,
             match event.event_type.as_str() {
                 "io_complete" => {
                     if let Some(latency) = event.latency_us {
-                        let mut latencies = latencies_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                        let mut latencies = latencies_clone.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                         latencies.push(latency);
                     }
                     if let Some(b) = event.bytes {
-                        let mut bytes_total = bytes_total.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                        let mut bytes_total = bytes_total.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                         *bytes_total += b;
                     }
                     {
-                        let mut io_count = io_count.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                        let mut io_count = io_count.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                         *io_count += 1;
                     }
-                    let mut events = events_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                    let mut events = events_clone.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                     events.push(event);
                 }
                 "io_timeout" => {
-                    let mut timeout_count = timeout_count.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                    let mut timeout_count = timeout_count.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                     *timeout_count += 1;
-                    let mut events = events_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                    let mut events = events_clone.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                     events.push(event);
                 }
                 _ => {}

@@ -1,8 +1,8 @@
-# Nuts Observer 生产部署运维手册
+# PodFlow 生产部署运维手册
 
 > 版本: v1.0  
 > 更新日期: 2026-05-13  
-> 适用版本: Nuts Observer v0.2+
+> 适用版本: PodFlow v0.2+
 
 ---
 
@@ -25,7 +25,7 @@
 
 ## 📖 概述
 
-Nuts Observer 是一个基于 NRI (Node Resource Interface) 的容器监控和诊断系统，专为生产环境设计，提供实时监控、智能诊断和自动化运维能力。
+PodFlow 是一个基于 NRI (Node Resource Interface) 的容器监控和诊断系统，专为生产环境设计，提供实时监控、智能诊断和自动化运维能力。
 
 ### 核心功能
 - **实时容器监控**: 基于 NRI 接口的高性能容器事件采集
@@ -90,7 +90,7 @@ Nuts Observer 是一个基于 NRI (Node Resource Interface) 的容器监控和�
 ```mermaid
 graph TB
     A[Containerd] --> B[NRI Plugin]
-    B --> C[Nuts Observer]
+    B --> C[PodFlow]
     C --> D[Local Storage]
     C --> E[Metrics Exporter]
     E --> F[Prometheus]
@@ -104,17 +104,17 @@ graph TB
 graph TB
     subgraph "Node 1"
         A1[Containerd] --> B1[NRI Plugin]
-        B1 --> C1[Nuts Observer]
+        B1 --> C1[PodFlow]
     end
     
     subgraph "Node 2"
         A2[Containerd] --> B2[NRI Plugin]
-        B2 --> C2[Nuts Observer]
+        B2 --> C2[PodFlow]
     end
     
     subgraph "Node N"
         AN[Containerd] --> BN[NRI Plugin]
-        BN --> CN[Nuts Observer]
+        BN --> CN[PodFlow]
     end
     
     C1 --> D[Message Queue]
@@ -153,24 +153,24 @@ ls /run/nri/
 
 ```bash
 # 下载最新版本
-wget https://github.com/your-org/nuts-observer/releases/latest/download/nuts-observer-linux-amd64.tar.gz
+wget https://github.com/your-org/podflow/releases/latest/download/podflow-linux-amd64.tar.gz
 
 # 解压
-tar -xzf nuts-observer-linux-amd64.tar.gz
-cd nuts-observer-linux-amd64
+tar -xzf podflow-linux-amd64.tar.gz
+cd podflow-linux-amd64
 
 # 安装到系统目录
-sudo cp nuts-observer /usr/local/bin/
-sudo cp nuts-adapters /usr/local/bin/
-sudo chmod +x /usr/local/bin/nuts-observer*
+sudo cp podflow /usr/local/bin/
+sudo cp podflow-adapters /usr/local/bin/
+sudo chmod +x /usr/local/bin/podflow*
 ```
 
 ### 3. 源码编译安装
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-org/nuts-observer.git
-cd nuts-observer
+git clone https://github.com/your-org/podflow.git
+cd podflow
 
 # 安装 Rust 工具链
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -180,25 +180,25 @@ source ~/.cargo/env
 cargo build --release
 
 # 安装
-sudo cp target/release/nuts-observer /usr/local/bin/
-sudo cp target/release/nuts-adapters /usr/local/bin/
+sudo cp target/release/podflow /usr/local/bin/
+sudo cp target/release/podflow-adapters /usr/local/bin/
 ```
 
 ### 4. 配置文件部署
 
 ```bash
 # 创建配置目录
-sudo mkdir -p /etc/nuts-observer
-sudo mkdir -p /var/lib/nuts-observer
-sudo mkdir -p /var/log/nuts-observer
+sudo mkdir -p /etc/podflow
+sudo mkdir -p /var/lib/podflow
+sudo mkdir -p /var/log/podflow
 
 # 复制配置文件
-sudo cp config.yaml /etc/nuts-observer/
-sudo cp systemd/nuts-observer.service /etc/systemd/system/
+sudo cp config.yaml /etc/podflow/
+sudo cp systemd/podflow.service /etc/systemd/system/
 
 # 设置权限
-sudo chown -R nuts:nuts /var/lib/nuts-observer
-sudo chown -R nuts:nuts /var/log/nuts-observer
+sudo chown -R podflow:podflow /var/lib/podflow
+sudo chown -R podflow:podflow /var/log/podflow
 ```
 
 ### 5. NRI 插件配置
@@ -210,8 +210,8 @@ sudo cp target/release/libnri_observer.so /opt/nri/plugins/
 
 # 配置 NRI
 sudo mkdir -p /etc/nri
-sudo cp deploy/nri/nuts-observer-nri.conf /etc/nri/
-sudo cp deploy/nri/nuts-observer-nri.toml /etc/nri/
+sudo cp deploy/nri/podflow-nri.conf /etc/nri/
+sudo cp deploy/nri/podflow-nri.toml /etc/nri/
 
 # 重启 containerd 以加载 NRI 插件
 sudo systemctl restart containerd
@@ -224,13 +224,13 @@ sudo systemctl restart containerd
 sudo systemctl daemon-reload
 
 # 启用服务
-sudo systemctl enable nuts-observer
+sudo systemctl enable podflow
 
 # 启动服务
-sudo systemctl start nuts-observer
+sudo systemctl start podflow
 
 # 检查状态
-sudo systemctl status nuts-observer
+sudo systemctl status podflow
 ```
 
 ---
@@ -240,7 +240,7 @@ sudo systemctl status nuts-observer
 ### 主配置文件 (config.yaml)
 
 ```yaml
-# Nuts Observer 主配置
+# PodFlow 主配置
 version: "v0.2"
 
 # 服务器配置
@@ -249,8 +249,8 @@ server:
   port: 8080
   tls:
     enabled: true
-    cert_file: "/etc/ssl/certs/nuts-server.crt"
-    key_file: "/etc/ssl/private/nuts-server.key"
+    cert_file: "/etc/ssl/certs/podflow-server.crt"
+    key_file: "/etc/ssl/private/podflow-server.key"
   cors:
     allowed_origins: ["https://dashboard.example.com"]
     allowed_methods: ["GET", "POST", "PUT", "DELETE"]
@@ -258,7 +258,7 @@ server:
 # NRI 配置
 nri:
   enabled: true
-  socket_path: "/run/nri/nuts-observer.sock"
+  socket_path: "/run/nri/podflow.sock"
   plugin_path: "/opt/nri/plugins/libnri_observer.so"
   timeout_ms: 5000
   retry_count: 3
@@ -268,7 +268,7 @@ nri:
 # 数据存储配置
 storage:
   type: "sqlite"  # sqlite, postgresql, mysql
-  connection_string: "file:/var/lib/nuts-observer/data.db"
+  connection_string: "file:/var/lib/podflow/data.db"
   max_connections: 10
   connection_timeout_ms: 5000
   query_timeout_ms: 30000
@@ -277,7 +277,7 @@ storage:
 logging:
   level: "info"  # debug, info, warn, error
   format: "json"  # text, json
-  file: "/var/log/nuts-observer/nuts.log"
+  file: "/var/log/podflow/podflow.log"
   max_size_mb: 100
   max_files: 10
   compress: true
@@ -298,7 +298,7 @@ diagnosis:
     timeout_ms: 30000
     max_retries: 3
   rules:
-    directory: "/etc/nuts-observer/rules"
+    directory: "/etc/podflow/rules"
     reload_interval_ms: 60000
 
 # 告警配置
@@ -318,13 +318,13 @@ alerts:
 ### 环境变量配置
 
 ```bash
-# /etc/nuts-observer/environment
-export NUTS_LOG_LEVEL=info
-export NUTS_SERVER_PORT=8080
-export NUTS_NRI_SOCKET_PATH=/run/nri/nuts-observer.sock
-export NUTS_DB_CONNECTION_STRING=file:/var/lib/nuts-observer/data.db
-export NUTS_AI_ENDPOINT=http://ai-service:8080/v1/analyze
-export NUTS_SMTP_PASSWORD=your-smtp-password
+# /etc/podflow/environment
+export PODFLOW_LOG_LEVEL=info
+export PODFLOW_SERVER_PORT=8080
+export PODFLOW_NRI_SOCKET_PATH=/run/nri/podflow.sock
+export PODFLOW_DB_CONNECTION_STRING=file:/var/lib/podflow/data.db
+export PODFLOW_AI_ENDPOINT=http://ai-service:8080/v1/analyze
+export PODFLOW_SMTP_PASSWORD=your-smtp-password
 ```
 
 ---
@@ -335,13 +335,13 @@ export NUTS_SMTP_PASSWORD=your-smtp-password
 
 ```bash
 # 创建专用用户
-sudo useradd -r -s /bin/false nuts
-sudo usermod -L nuts
+sudo useradd -r -s /bin/false podflow
+sudo usermod -L podflow
 
 # 设置文件权限
-sudo chmod 750 /etc/nuts-observer
-sudo chmod 640 /etc/nuts-observer/config.yaml
-sudo chown -R nuts:nuts /etc/nuts-observer
+sudo chmod 750 /etc/podflow
+sudo chmod 640 /etc/podflow/config.yaml
+sudo chown -R podflow:podflow /etc/podflow
 ```
 
 ### 2. TLS 证书配置
@@ -349,14 +349,14 @@ sudo chown -R nuts:nuts /etc/nuts-observer
 ```bash
 # 生成自签名证书（测试环境）
 sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout /etc/ssl/private/nuts-server.key \
-  -out /etc/ssl/certs/nuts-server.crt \
-  -subj "/C=CN/ST=Beijing/L=Beijing/O=Company/CN=nuts-observer"
+  -keyout /etc/ssl/private/podflow-server.key \
+  -out /etc/ssl/certs/podflow-server.crt \
+  -subj "/C=CN/ST=Beijing/L=Beijing/O=Company/CN=podflow"
 
 # 设置证书权限
-sudo chmod 600 /etc/ssl/private/nuts-server.key
-sudo chmod 644 /etc/ssl/certs/nuts-server.crt
-sudo chown nuts:nuts /etc/ssl/private/nuts-server.key
+sudo chmod 600 /etc/ssl/private/podflow-server.key
+sudo chmod 644 /etc/ssl/certs/podflow-server.crt
+sudo chown podflow:podflow /etc/ssl/private/podflow-server.key
 ```
 
 ### 3. 防火墙配置
@@ -377,8 +377,8 @@ sudo iptables -A INPUT -j DROP
 
 ```bash
 # 设置 SELinux 上下文
-sudo semanage fcontext -a -t bin_t "/usr/local/bin/nuts-observer"
-sudo restorecon -v /usr/local/bin/nuts-observer
+sudo semanage fcontext -a -t bin_t "/usr/local/bin/podflow"
+sudo restorecon -v /usr/local/bin/podflow
 
 # 允许网络连接
 sudo setsebool -P httpd_can_network_connect 1
@@ -396,7 +396,7 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: 'nuts-observer'
+  - job_name: 'podflow'
     static_configs:
       - targets: ['localhost:8080']
     metrics_path: '/metrics'
@@ -408,14 +408,14 @@ scrape_configs:
 ```json
 {
   "dashboard": {
-    "title": "Nuts Observer Monitoring",
+    "title": "PodFlow Monitoring",
     "panels": [
       {
         "title": "Event Processing Rate",
         "type": "graph",
         "targets": [
           {
-            "expr": "rate(nuts_events_processed_total[5m])",
+            "expr": "rate(podflow_events_processed_total[5m])",
             "legendFormat": "Events/sec"
           }
         ]
@@ -440,10 +440,10 @@ scrape_configs:
 ```yaml
 # alerts.yml
 groups:
-  - name: nuts-observer
+  - name: podflow
     rules:
       - alert: HighEventLatency
-        expr: histogram_quantile(0.95, rate(nuts_event_duration_seconds_bucket[5m])) > 0.1
+        expr: histogram_quantile(0.95, rate(podflow_event_duration_seconds_bucket[5m])) > 0.1
         for: 2m
         labels:
           severity: warning
@@ -452,13 +452,13 @@ groups:
           description: "95th percentile latency is {{ $value }}s"
 
       - alert: ServiceDown
-        expr: up{job="nuts-observer"} == 0
+        expr: up{job="podflow"} == 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Nuts Observer service is down"
-          description: "Nuts Observer has been down for more than 1 minute"
+          summary: "PodFlow service is down"
+          description: "PodFlow has been down for more than 1 minute"
 ```
 
 ---
@@ -471,13 +471,13 @@ groups:
 
 ```bash
 # 检查服务状态
-sudo systemctl status nuts-observer
+sudo systemctl status podflow
 
 # 查看详细日志
-sudo journalctl -u nuts-observer -f
+sudo journalctl -u podflow -f
 
 # 检查配置文件
-sudo nuts-observer --config /etc/nuts-observer/config.yaml --check
+sudo podflow --config /etc/podflow/config.yaml --check
 ```
 
 #### 2. NRI 连接问题
@@ -485,7 +485,7 @@ sudo nuts-observer --config /etc/nuts-observer/config.yaml --check
 ```bash
 # 检查 NRI socket
 ls -la /run/nri/
-sudo lsof /run/nri/nuts-observer.sock
+sudo lsof /run/nri/podflow.sock
 
 # 检查 containerd NRI 插件
 sudo containerd-ctr plugins ls | grep nri
@@ -498,12 +498,12 @@ sudo systemctl restart containerd
 
 ```bash
 # 检查系统资源
-top -p $(pgrep nuts-observer)
+top -p $(pgrep podflow)
 iostat -x 1
 sar -u 1 10
 
 # 检查事件处理延迟
-curl -s http://localhost:8080/metrics | grep nuts_event_duration
+curl -s http://localhost:8080/metrics | grep podflow_event_duration
 
 # 检查内存使用
 curl -s http://localhost:8080/metrics | grep process_resident_memory
@@ -513,13 +513,13 @@ curl -s http://localhost:8080/metrics | grep process_resident_memory
 
 ```bash
 # 检查数据库连接
-sudo -u nuts sqlite3 /var/lib/nuts-observer/data.db ".tables"
+sudo -u podflow sqlite3 /var/lib/podflow/data.db ".tables"
 
 # 检查数据库大小
-du -h /var/lib/nuts-observer/data.db
+du -h /var/lib/podflow/data.db
 
 # 数据库维护
-sudo -u nuts sqlite3 /var/lib/nuts-observer/data.db "VACUUM;"
+sudo -u podflow sqlite3 /var/lib/podflow/data.db "VACUUM;"
 ```
 
 ### 日志分析
@@ -528,13 +528,13 @@ sudo -u nuts sqlite3 /var/lib/nuts-observer/data.db "VACUUM;"
 
 ```bash
 # 查看错误日志
-sudo grep -i error /var/log/nuts-observer/nuts.log
+sudo grep -i error /var/log/podflow/podflow.log
 
 # 查看性能相关日志
-sudo grep -i latency /var/log/nuts-observer/nuts.log
+sudo grep -i latency /var/log/podflow/podflow.log
 
 # 查看连接问题
-sudo grep -i connection /var/log/nuts-observer/nuts.log
+sudo grep -i connection /var/log/podflow/podflow.log
 ```
 
 ---
@@ -593,23 +593,23 @@ memory:
 #!/bin/bash
 # backup.sh
 
-BACKUP_DIR="/backup/nuts-observer"
+BACKUP_DIR="/backup/podflow"
 DATE=$(date +%Y%m%d_%H%M%S)
 
 # 创建备份目录
 mkdir -p $BACKUP_DIR/$DATE
 
 # 备份配置文件
-cp -r /etc/nuts-observer $BACKUP_DIR/$DATE/
+cp -r /etc/podflow $BACKUP_DIR/$DATE/
 
 # 备份数据库
-sqlite3 /var/lib/nuts-observer/data.db ".backup $BACKUP_DIR/$DATE/data.db"
+sqlite3 /var/lib/podflow/data.db ".backup $BACKUP_DIR/$DATE/data.db"
 
 # 备份日志
-cp -r /var/log/nuts-observer $BACKUP_DIR/$DATE/
+cp -r /var/log/podflow $BACKUP_DIR/$DATE/
 
 # 压缩备份
-tar -czf $BACKUP_DIR/nuts-observer-$DATE.tar.gz -C $BACKUP_DIR $DATE
+tar -czf $BACKUP_DIR/podflow-$DATE.tar.gz -C $BACKUP_DIR $DATE
 rm -rf $BACKUP_DIR/$DATE
 
 # 清理旧备份（保留30天）
@@ -623,23 +623,23 @@ find $BACKUP_DIR -name "*.tar.gz" -mtime +30 -delete
 # restore.sh
 
 BACKUP_FILE=$1
-RESTORE_DIR="/tmp/nuts-observer-restore"
+RESTORE_DIR="/tmp/podflow-restore"
 
 # 解压备份
 tar -xzf $BACKUP_FILE -C /tmp
 
 # 停止服务
-sudo systemctl stop nuts-observer
+sudo systemctl stop podflow
 
 # 恢复配置文件
-sudo cp -r $RESTORE_DIR/etc/nuts-observer/* /etc/nuts-observer/
+sudo cp -r $RESTORE_DIR/etc/podflow/* /etc/podflow/
 
 # 恢复数据库
-sudo cp $RESTORE_DIR/var/lib/nuts-observer/data.db /var/lib/nuts-observer/
-sudo chown nuts:nuts /var/lib/nuts-observer/data.db
+sudo cp $RESTORE_DIR/var/lib/podflow/data.db /var/lib/podflow/
+sudo chown podflow:podflow /var/lib/podflow/data.db
 
 # 启动服务
-sudo systemctl start nuts-observer
+sudo systemctl start podflow
 ```
 
 ---
@@ -653,7 +653,7 @@ sudo systemctl start nuts-observer
 # upgrade.sh
 
 NEW_VERSION=$1
-CURRENT_VERSION=$(nuts-observer --version)
+CURRENT_VERSION=$(podflow --version)
 
 echo "Upgrading from $CURRENT_VERSION to $NEW_VERSION"
 
@@ -661,25 +661,25 @@ echo "Upgrading from $CURRENT_VERSION to $NEW_VERSION"
 ./backup.sh
 
 # 2. 下载新版本
-wget https://github.com/your-org/nuts-observer/releases/download/$NEW_VERSION/nuts-observer-linux-amd64.tar.gz
+wget https://github.com/your-org/podflow/releases/download/$NEW_VERSION/podflow-linux-amd64.tar.gz
 
 # 3. 停止服务
-sudo systemctl stop nuts-observer
+sudo systemctl stop podflow
 
 # 4. 替换二进制文件
-tar -xzf nuts-observer-linux-amd64.tar.gz
-sudo cp nuts-observer-linux-amd64/nuts-observer /usr/local/bin/
-sudo cp nuts-observer-linux-amd64/nuts-adapters /usr/local/bin/
+tar -xzf podflow-linux-amd64.tar.gz
+sudo cp podflow-linux-amd64/podflow /usr/local/bin/
+sudo cp podflow-linux-amd64/podflow-adapters /usr/local/bin/
 
 # 5. 更新配置文件（如果需要）
-# nuts-observer --migrate-config /etc/nuts-observer/config.yaml
+# podflow --migrate-config /etc/podflow/config.yaml
 
 # 6. 启动服务
-sudo systemctl start nuts-observer
+sudo systemctl start podflow
 
 # 7. 验证升级
-nuts-observer --version
-sudo systemctl status nuts-observer
+podflow --version
+sudo systemctl status podflow
 ```
 
 ### 2. 滚动升级（集群环境）
@@ -720,22 +720,22 @@ done
 #!/bin/bash
 # daily-check.sh
 
-echo "=== Nuts Observer Daily Health Check ==="
+echo "=== PodFlow Daily Health Check ==="
 
 # 检查服务状态
-systemctl is-active nuts-observer && echo "✅ Service running" || echo "❌ Service down"
+systemctl is-active podflow && echo "✅ Service running" || echo "❌ Service down"
 
 # 检查端口监听
 netstat -tlnp | grep :8080 && echo "✅ Port listening" || echo "❌ Port not listening"
 
 # 检查磁盘空间
-df -h /var/lib/nuts-observer | tail -1 | awk '{print $5}' | sed 's/%//' | awk '{if($1<80) print "✅ Disk usage OK"; else print "❌ Disk usage high"}'
+df -h /var/lib/podflow | tail -1 | awk '{print $5}' | sed 's/%//' | awk '{if($1<80) print "✅ Disk usage OK"; else print "❌ Disk usage high"}'
 
 # 检查内存使用
 free | grep Mem | awk '{if($3/$2*100<80) print "✅ Memory usage OK"; else print "❌ Memory usage high"}'
 
 # 检查错误日志
-ERROR_COUNT=$(grep -c "ERROR" /var/log/nuts-observer/nuts.log 2>/dev/null || echo 0)
+ERROR_COUNT=$(grep -c "ERROR" /var/log/podflow/podflow.log 2>/dev/null || echo 0)
 if [ $ERROR_COUNT -eq 0 ]; then
     echo "✅ No errors in logs"
 else
@@ -743,7 +743,7 @@ else
 fi
 
 # 检查事件处理
-EVENT_RATE=$(curl -s http://localhost:8080/metrics | grep "nuts_events_processed_total" | tail -1 | awk '{print $2}')
+EVENT_RATE=$(curl -s http://localhost:8080/metrics | grep "podflow_events_processed_total" | tail -1 | awk '{print $2}')
 if [ -n "$EVENT_RATE" ] && [ $EVENT_RATE -gt 0 ]; then
     echo "✅ Event processing normal"
 else
@@ -816,16 +816,16 @@ echo "Estimated storage requirement: ${TOTAL_STORAGE_GB}GB"
 echo "=== Security Audit ==="
 
 # 检查文件权限
-find /etc/nuts-observer -type f -perm /o+r -exec echo "❌ World readable file: {}" \;
+find /etc/podflow -type f -perm /o+r -exec echo "❌ World readable file: {}" \;
 
 # 检查 SUID 文件
-find /usr/local/bin/nuts-observer* -perm -4000 -exec echo "❌ SUID file: {}" \;
+find /usr/local/bin/podflow* -perm -4000 -exec echo "❌ SUID file: {}" \;
 
 # 检查开放端口
-netstat -tlnp | grep nuts-observer
+netstat -tlnp | grep podflow
 
 # 检查进程权限
-ps aux | grep nuts-observer | awk '{print $1}' | sort | uniq
+ps aux | grep podflow | awk '{print $1}' | sort | uniq
 
 echo "=== Security Audit Complete ==="
 ```
@@ -835,14 +835,14 @@ echo "=== Security Audit Complete ==="
 ## 📞 支持与联系
 
 ### 技术支持
-- **文档**: https://docs.nuts-observer.io
-- **GitHub**: https://github.com/your-org/nuts-observer
-- **Issues**: https://github.com/your-org/nuts-observer/issues
-- **社区**: https://community.nuts-observer.io
+- **文档**: https://docs.podflow.io
+- **GitHub**: https://github.com/your-org/podflow
+- **Issues**: https://github.com/your-org/podflow/issues
+- **社区**: https://community.podflow.io
 
 ### 紧急联系
-- **邮件**: support@nuts-observer.io
-- **Slack**: #nuts-observer-support
+- **邮件**: support@podflow.io
+- **Slack**: #podflow-support
 - **电话**: +86-xxx-xxxx-xxxx
 
 ### 版本发布

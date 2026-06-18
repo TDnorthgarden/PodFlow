@@ -399,7 +399,7 @@ impl NriPlugin for NriGrpcService {
 
         let response = nri_proto::RegisterPluginResponse {
             accepted: true,
-            message: "nuts-observer NRI plugin registered successfully".to_string(),
+            message: "podflow NRI plugin registered successfully".to_string(),
             config: Some(nri_proto::PluginConfig {
                 log_level: "info".to_string(),
                 config_data: vec![], // 可以返回具体配置
@@ -560,7 +560,7 @@ impl std::error::Error for GrpcError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::error::NutsError;
+    use crate::types::error::PodflowError;
 
     #[test]
     fn test_event_conversion() -> Result<(), Box<dyn std::error::Error>> {
@@ -588,7 +588,7 @@ mod tests {
             NriEvent::AddOrUpdate(pod) => {
                 assert_eq!(pod.pod_uid, "test-uid");
             }
-            _ => return Err(NutsError::internal("Expected AddOrUpdate event").into()),
+            _ => return Err(PodflowError::internal("Expected AddOrUpdate event").into()),
         }
         Ok(())
     }

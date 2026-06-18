@@ -2,7 +2,7 @@
 
 ## 概述
 
-nuts-observer案例库现已支持从YAML配置文件加载扩展案例，与witty-ops-cases对接。
+podflow案例库现已支持从YAML配置文件加载扩展案例，与witty-ops-cases对接。
 
 ## 当前状态
 
@@ -38,14 +38,14 @@ witty-ops-cases中的案例通常包含:
 - 解决方案
 - 相关指标
 
-### 步骤3: 转换为nuts格式
+### 步骤3: 转换为podflow格式
 
 创建转换脚本 `/tmp/convert_cases.py`:
 
 ```python
 #!/usr/bin/env python3
 """
-将witty-ops-cases转换为nuts-observer案例库格式
+将witty-ops-cases转换为podflow案例库格式
 """
 
 import yaml
@@ -79,7 +79,7 @@ def extract_metrics_from_description(desc):
 
 def convert_case(case_data, case_id):
     """转换单个案例"""
-    nuts_case = {
+    podflow_case = {
         'case_id': case_id,
         'title': case_data.get('title', '未知案例'),
         'description': case_data.get('description', ''),
@@ -110,7 +110,7 @@ def convert_case(case_data, case_id):
         'severity': case_data.get('severity', 7),
         'confidence': 0.75
     }
-    return nuts_case
+    return podflow_case
 
 def infer_evidence_types(case_data):
     """根据内容推断证据类型"""
@@ -181,7 +181,7 @@ def main():
     """主函数"""
     # 读取witty-ops-cases
     witty_cases_dir = '/tmp/witty-cases'
-    output_file = '/root/nuts/cases/imported_cases.yaml'
+    output_file = '/root/podflow/cases/imported_cases.yaml'
     
     imported_cases = []
     
@@ -210,9 +210,9 @@ def main():
                     case_id = f"witty-{Path(file).stem}"
                     
                     # 转换案例
-                    nuts_case = convert_case(case_data, case_id)
-                    imported_cases.append(nuts_case)
-                    print(f"✓ 导入: {nuts_case['title']}")
+                    podflow_case = convert_case(case_data, case_id)
+                    imported_cases.append(podflow_case)
+                    print(f"✓ 导入: {podflow_case['title']}")
                     
                 except Exception as e:
                     print(f"✗ 跳过 {file}: {e}")
@@ -240,16 +240,16 @@ python3 /tmp/convert_cases.py
 
 ```bash
 # 查看生成的案例
-cat /root/nuts/cases/imported_cases.yaml | head -50
+cat /root/podflow/cases/imported_cases.yaml | head -50
 
 # 合并到主案例文件（手动或使用脚本）
-cat /root/nuts/cases/cases.yaml /root/nuts/cases/imported_cases.yaml > /root/nuts/cases/all_cases.yaml
+cat /root/podflow/cases/cases.yaml /root/podflow/cases/imported_cases.yaml > /root/podflow/cases/all_cases.yaml
 ```
 
 ### 步骤6: 重新加载案例库
 
 ```bash
-./nuts-observer case stats
+./podflow case stats
 ```
 
 ## 案例文件结构
@@ -294,22 +294,22 @@ cases:
 
 ```bash
 # 查看案例统计
-./nuts-observer case stats
+./podflow case stats
 
 # 列出所有案例
-./nuts-observer case list
+./podflow case list
 
 # 按证据类型过滤
-./nuts-observer case list --evidence-type network
+./podflow case list --evidence-type network
 
 # 查看案例详情
-./nuts-observer case show euler-io-hang-001
+./podflow case show euler-io-hang-001
 
 # 根据指标匹配案例
-./nuts-observer case match --metrics "cpu_usage=85,memory_usage=90"
+./podflow case match --metrics "cpu_usage=85,memory_usage=90"
 
 # 导出案例库
-./nuts-observer case export --file backup_cases.yaml
+./podflow case export --file backup_cases.yaml
 ```
 
 ## 扩展建议
@@ -336,5 +336,5 @@ cases:
 ## 参考
 
 - witty-ops-cases: https://gitcode.com/wenjunryou/witty-ops-cases
-- nuts案例配置: `/root/nuts/cases/cases.yaml`
-- 案例库源码: `/root/nuts/src/diagnosis/case_library.rs`
+- podflow案例配置: `/root/podflow/cases/cases.yaml`
+- 案例库源码: `/root/podflow/src/diagnosis/case_library.rs`

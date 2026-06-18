@@ -1,4 +1,4 @@
-use crate::types::error::NutsError;
+use crate::types::error::PodflowError;
 use crate::types::evidence::*;
 use crate::collector::nri_mapping_v2::NriMappingTableV2;
 use serde::{Deserialize, Serialize};
@@ -53,7 +53,7 @@ struct BpftraceTcpStagesEvent {
 }
 
 /// 运行 TCP 连接阶段细分采集
-pub fn run_tcp_connect_stages_collect(cfg: TcpConnectStagesCollectorConfig) -> Result<Evidence, NutsError> {
+pub fn run_tcp_connect_stages_collect(cfg: TcpConnectStagesCollectorConfig) -> Result<Evidence, PodflowError> {
     let scope_key = make_scope_key(
         cfg.pod.as_ref().and_then(|p| p.uid.as_deref()),
         cfg.cgroup_id.as_deref(),
@@ -97,7 +97,7 @@ pub fn run_tcp_connect_stages_collect(cfg: TcpConnectStagesCollectorConfig) -> R
     {
         Ok(c) => c,
         Err(e) => {
-            let mut errors_guard = errors.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+            let mut errors_guard = errors.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
             errors_guard.push(CollectionError {
                 code: "BPFTRACE_SCRIPT_LOAD_FAILED".into(),
                 message: format!("Failed to start bpftrace: {}", e),
@@ -114,7 +114,7 @@ pub fn run_tcp_connect_stages_collect(cfg: TcpConnectStagesCollectorConfig) -> R
     
     let stdout = match child.stdout.take() {
         Some(stdout) => stdout,
-        None => return Err(NutsError::internal("Failed to capture stdout from bpftrace process")),
+        None => return Err(PodflowError::internal("Failed to capture stdout from bpftrace process")),
     };
     let reader = BufReader::new(stdout);
     
@@ -142,19 +142,19 @@ pub fn run_tcp_connect_stages_collect(cfg: TcpConnectStagesCollectorConfig) -> R
                     
                     // 记录阶段事件
                     {
-                        let mut events = events_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                        let mut events = events_clone.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                         events.push(event);
                     }
                     
                     // 统计阶段计数
                     {
-                        let mut counts = counts_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                        let mut counts = counts_clone.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                         *counts.entry(stage.clone()).or_insert(0) += 1;
                     }
                     
                     // 记录阶段持续时间
                     if duration > 0 {
-                        let mut durations = durations_clone.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+                        let mut durations = durations_clone.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
                         durations.entry(stage.clone()).or_insert_with(Vec::new).push(duration);
                     }
                 }

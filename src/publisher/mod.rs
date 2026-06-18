@@ -323,6 +323,6 @@ pub struct ConclusionSummary {
 
 impl Default for ResultPublisher {
     fn default() -> Self {
-        Self::new("/var/log/nuts")
+        Self::new("/var/log/podflow")
     }
 }

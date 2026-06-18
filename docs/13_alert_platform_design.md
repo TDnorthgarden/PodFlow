@@ -165,7 +165,7 @@ channels:
     enabled: false
     config:
       smtp_server: "smtp.example.com"
-      from: "alerts@nuts.io"
+      from: "alerts@podflow.io"
       to: ["ops@example.com"]
 ```
 
@@ -211,7 +211,7 @@ rules:
 
 ### 1. 采集触发
 ```bash
-nuts-observer trigger \
+podflow trigger \
   --pod-name myapp-xxx \
   --evidence-types cpu,memory \
   --window-secs 60

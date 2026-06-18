@@ -29,7 +29,7 @@ pub struct PersistConfig {
 impl Default for PersistConfig {
     fn default() -> Self {
         Self {
-            db_path: "/var/lib/nuts/nri.db".to_string(),
+            db_path: "/var/lib/podflow/nri.db".to_string(),
             snapshot_interval_secs: 300, // 5分钟
             flush_async: true,
             cache_capacity_mb: 128,

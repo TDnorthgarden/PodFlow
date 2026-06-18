@@ -213,7 +213,7 @@ async fn trigger_handler(
     let diagnosis = engine.diagnose(&evidences);
 
     // 发布结果
-    let publisher = ResultPublisher::new("/tmp/nuts");
+    let publisher = ResultPublisher::new("/tmp/podflow");
     for evidence in &evidences {
         if let Err(e) = publisher.publish_evidence(evidence) {
             tracing::warn!("Failed to publish evidence: {:?}", e);

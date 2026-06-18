@@ -125,15 +125,15 @@ pub struct NriV3CapacityConfig {
 }
 
 fn default_nri_enabled() -> bool { true }
-fn default_nri_socket_path() -> String { "/var/run/nri/nuts-observer.sock".to_string() }
-fn default_nri_plugin_name() -> String { "nuts-observer".to_string() }
+fn default_nri_socket_path() -> String { "/var/run/nri/podflow.sock".to_string() }
+fn default_nri_plugin_name() -> String { "podflow".to_string() }
 fn default_nri_plugin_idx() -> String { "00".to_string() }
 fn default_nri_version() -> String { "1.0.0".to_string() }
 fn default_nri_runtime_socket_path() -> String { "/var/run/nri/nri.sock".to_string() }
 fn default_true() -> bool { true }
 
 // V3 配置默认值函数
-fn default_v3_db_path() -> String { "/var/lib/nuts-observer/nri_v3.db".to_string() }
+fn default_v3_db_path() -> String { "/var/lib/podflow/nri_v3.db".to_string() }
 fn default_snapshot_interval() -> u64 { 300 }
 fn default_max_snapshots() -> u32 { 10 }
 fn default_worker_threads() -> usize { 2 }
@@ -247,7 +247,7 @@ pub struct Config {
 }
 
 fn default_output_dir() -> String {
-    "/tmp/nuts".to_string()
+    "/tmp/podflow".to_string()
 }
 
 fn default_log_level() -> String {
@@ -336,7 +336,7 @@ fn default_ai_endpoint() -> String {
 }
 
 fn default_ai_model() -> String {
-    "nuts-ai-diagnosis".to_string()
+    "podflow-ai-diagnosis".to_string()
 }
 
 fn default_ai_timeout() -> u64 {
@@ -601,7 +601,7 @@ impl Config {
                 enabled: true,
                 endpoint: "http://localhost:8080/v1/chat/completions".to_string(),
                 api_key: Some("your-api-key-here".to_string()),
-                model: "nuts-ai-diagnosis".to_string(),
+                model: "podflow-ai-diagnosis".to_string(),
                 timeout_secs: 60,
                 fallback_mode: "keep_original".to_string(),
             },
@@ -637,7 +637,7 @@ impl Config {
                     cooldown_ms: 60000,
                 },
             ],
-            output_dir: "/tmp/nuts".to_string(),
+            output_dir: "/tmp/podflow".to_string(),
             log_level: "info".to_string(),
             permission: PermissionConfig::default(),
             nri: NriConfig::default(),
@@ -680,9 +680,9 @@ impl Config {
     pub fn reload(&mut self) -> Result<(), ConfigError> {
         // 尝试从多个路径加载配置文件
         let config_paths = vec![
-            "nuts.yaml",
-            "/etc/nuts/config.yaml",
-            "config/nuts.yaml",
+            "podflow.yaml",
+            "/etc/podflow/config.yaml",
+            "config/podflow.yaml",
         ];
 
         for path in &config_paths {

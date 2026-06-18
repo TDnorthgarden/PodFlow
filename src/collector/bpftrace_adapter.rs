@@ -543,7 +543,7 @@ impl BpftraceAdapter {
 
 /// 解析 bpftrace 脚本路径
 ///
-/// 按优先级搜索：系统路径 `/usr/share/bpftrace/nuts/` → 源码相对路径
+/// 按优先级搜索：系统路径 `/usr/share/bpftrace/podflow/` → 源码相对路径
 /// 确保部署环境下优先使用系统安装的脚本，开发环境回退到源码目录。
 pub fn resolve_script_path(relative_path: &str) -> String {
     // 从相对路径提取文件名部分，如 "scripts/bpftrace/block_io/io_latency.bt" -> "block_io/io_latency.bt"
@@ -551,7 +551,7 @@ pub fn resolve_script_path(relative_path: &str) -> String {
         .trim_start_matches("scripts/bpftrace/");
 
     // 优先搜索系统路径
-    let system_path = format!("/usr/share/bpftrace/nuts/{}", trimmed);
+    let system_path = format!("/usr/share/bpftrace/podflow/{}", trimmed);
     if std::path::Path::new(&system_path).exists() {
         return system_path;
     }

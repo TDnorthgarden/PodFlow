@@ -1442,42 +1442,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nuts-observer"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "atty",
- "axum",
- "chrono",
- "clap",
- "criterion",
- "dashmap",
- "k8s-openapi",
- "kube",
- "kube-derive",
- "libc",
- "nix",
- "prost",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "sled",
- "tempfile",
- "thiserror 1.0.58",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-build",
- "tower",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "object"
 version = "0.36.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1736,6 +1700,42 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51bae2ac328883f7acdfea3d66a7c35751187f870bc81f94563733a154d7a670"
 dependencies = [
  "plotters-backend",
+]
+
+[[package]]
+name = "podflow"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "atty",
+ "axum",
+ "chrono",
+ "clap",
+ "criterion",
+ "dashmap",
+ "k8s-openapi",
+ "kube",
+ "kube-derive",
+ "libc",
+ "nix",
+ "prost",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "sled",
+ "tempfile",
+ "thiserror 1.0.58",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

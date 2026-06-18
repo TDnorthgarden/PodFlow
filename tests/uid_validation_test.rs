@@ -16,7 +16,7 @@ use tokio::net::UnixStream;
 use std::os::unix::net::UnixListener as StdUnixListener;
 
 // 直接导入核心认证类型
-use nuts_observer::auth::{PeerUid, AuthenticatedStream, get_peer_uid, check_uid_permission};
+use podflow::auth::{PeerUid, AuthenticatedStream, get_peer_uid, check_uid_permission};
 
 /// 测试 PeerUid 类型的基本功能
 #[test]
@@ -238,7 +238,7 @@ fn test_uid_validation_configuration() {
     // 测试配置格式
     let config_content = r#"
 # Collector Daemon 配置
-socket_path: "/tmp/nuts-collector.sock"
+socket_path: "/tmp/podflow-collector.sock"
 allowed_uids: [0, 1000, 1001]
 log_level: "info"
 "#;
@@ -268,7 +268,7 @@ async fn test_uid_validation_integration() {
     println!("📝 验证 collector_daemon 编译...");
 
     let check_result = Command::new("cargo")
-        .args(&["check", "--bin", "nuts-collector-daemon", "--features", "nri-grpc"])
+        .args(&["check", "--bin", "podflow-collector", "--features", "nri-grpc"])
         .output();
 
     assert!(check_result.is_ok(), "应该能够编译 collector_daemon");
@@ -279,7 +279,7 @@ async fn test_uid_validation_integration() {
     println!("🔍 验证参数处理...");
 
     let help_result = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-collector-daemon", "--features", "nri-grpc", "--", "--help"])
+        .args(&["run", "--bin", "podflow-collector", "--features", "nri-grpc", "--", "--help"])
         .output();
 
     assert!(help_result.is_ok(), "应该能够处理 --help 参数");
@@ -288,7 +288,7 @@ async fn test_uid_validation_integration() {
     println!("🔍 验证错误处理...");
 
     let invalid_result = Command::new("cargo")
-        .args(&["run", "--bin", "nuts-collector-daemon", "--", "--invalid-flag"])
+        .args(&["run", "--bin", "podflow-collector", "--", "--invalid-flag"])
         .output();
 
     assert!(invalid_result.is_ok(), "应该能够处理无效参数");

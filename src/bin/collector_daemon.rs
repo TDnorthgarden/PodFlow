@@ -1,11 +1,11 @@
-//! Nuts Collector Daemon - 特权采集守护进程
+//! PodFlow Collector Daemon - 特权采集守护进程
 //!
 //! 此程序以特权模式运行（root 或 CAP_BPF + CAP_SYS_ADMIN），
-//! 通过 Unix Socket 为非特权的 nuts-observer 提供采集服务。
+//! 通过 Unix Socket 为非特权的 podflow 提供采集服务。
 //!
 //! # 权限要求
 //! - 运行用户: root 或具有 CAP_BPF + CAP_SYS_ADMIN + CAP_SYS_PTRACE
-//! - 文件权限: /run/nuts/collector.sock (0660, root:nuts)
+//! - 文件权限: /run/podflow/collector.sock (0660, root:podflow)
 //!
 //! # 安全设计
 //! - 只接受来自 Unix Socket 的请求
@@ -28,11 +28,11 @@ use tonic::{transport::Server, Request, Response, Status};
 use tracing::{info, error};
 
 // 导入公共认证类型
-use nuts_observer::auth::PeerUid;
+use podflow::auth::PeerUid;
 
 // 引入生成的 protobuf 代码
 mod proto {
-    tonic::include_proto!("nuts.collector");
+    tonic::include_proto!("podflow.collector");
 }
 
 use proto::collector_server::{Collector, CollectorServer};
@@ -56,7 +56,7 @@ struct DaemonConfig {
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
-            socket_path: "/run/nuts/collector.sock".to_string(),
+            socket_path: "/run/podflow/collector.sock".to_string(),
             allowed_uids: vec![0, 1000], // root 和 uid 1000
             max_duration_secs: 60,
             script_whitelist: vec![
@@ -477,7 +477,7 @@ async fn create_secure_socket(path: &str) -> std::io::Result<UnixListener> {
     }
     
     // 确保目录存在
-    let dir = Path::new(path).parent().unwrap_or(Path::new("/run/nuts"));
+    let dir = Path::new(path).parent().unwrap_or(Path::new("/run/podflow"));
     tokio::fs::create_dir_all(dir).await?;
     tokio::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).await?;
     
@@ -575,9 +575,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let socket_path = args.get(1)
         .cloned()
-        .unwrap_or_else(|| "/run/nuts/collector.sock".to_string());
+        .unwrap_or_else(|| "/run/podflow/collector.sock".to_string());
 
-    info!("Starting nuts-collector-daemon v{}", env!("CARGO_PKG_VERSION"));
+    info!("Starting podflow-collector v{}", env!("CARGO_PKG_VERSION"));
     
     // 检查权限
     let uid = unsafe { libc::getuid() };

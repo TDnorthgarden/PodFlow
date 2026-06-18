@@ -55,7 +55,7 @@ pub struct NriContainerRequest {
     /// 运行时类型（如：runc, crun）
     #[serde(default)]
     pub runtime: Option<String>,
-    /// 容器状态（nuts-adapter 发送的字段）
+    /// 容器状态（podflow-adapter 发送的字段）
     #[serde(default)]
     pub state: Option<String>,
 }

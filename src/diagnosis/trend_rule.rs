@@ -444,7 +444,7 @@ pub fn create_default_trend_rules() -> Vec<Box<dyn Rule>> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use crate::types::error::NutsError;
+    use crate::types::error::PodflowError;
     use crate::types::evidence::{CollectionMeta, TimeWindow, Scope, Attribution};
 
     fn create_test_evidence_with_time(
@@ -497,7 +497,7 @@ mod tests {
         }
 
         // 验证斜率计算
-        let series = rule.time_series.lock().map_err(|_| NutsError::lock_error("Failed to acquire lock"))?;
+        let series = rule.time_series.lock().map_err(|_| PodflowError::lock_error("Failed to acquire lock"))?;
         let points: Vec<_> = series.iter().copied().collect();
         let result = rule.linear_regression(&points).unwrap();
         

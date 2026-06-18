@@ -1,10 +1,10 @@
-# Nuts Observer NRI Plugin Configuration
+# PodFlow NRI Plugin Configuration
 # 该配置文件用于 containerd NRI 插件注册
-# 路径: /etc/nri/conf.d/nuts-observer-nri.toml
+# 路径: /etc/nri/conf.d/podflow-nri.toml
 
 [plugin]
 # 插件名称
-name = "nuts-observer"
+name = "podflow"
 
 # 插件索引 (00-99，数字越小优先级越高)
 idx = "00"
@@ -13,7 +13,7 @@ idx = "00"
 nri_version = "1.0.0"
 
 # 插件套接字路径 (Unix Socket)
-socket_path = "/var/run/nri/nuts-observer.sock"
+socket_path = "/var/run/nri/podflow.sock"
 
 # 是否自动向 containerd 注册
 auto_register = true

@@ -1,8 +1,8 @@
-# Nuts Observer v0.1.0 发布指南
+# PodFlow v0.1.0 发布指南
 
 ## 概述
 
-本文档描述了 Nuts Observer v0.1.0 的正式发布流程，包括版本标记、发布说明、更新流程和后续维护计划。
+本文档描述了 PodFlow v0.1.0 的正式发布流程，包括版本标记、发布说明、更新流程和后续维护计划。
 
 ## 版本信息
 
@@ -102,11 +102,11 @@ git log --oneline v0.1.0 > /tmp/release_notes.txt
 ```bash
 # 生成发布说明
 cat > /tmp/RELEASE_NOTES.md << EOF
-# Nuts Observer v0.1.0 发布说明
+# PodFlow v0.1.0 发布说明
 
 ## 🎉 新版本发布
 
-Nuts Observer v0.1.0 现已正式发布！
+PodFlow v0.1.0 现已正式发布！
 
 ## 📋 版本信息
 - **版本**: v0.1.0
@@ -177,28 +177,28 @@ Nuts Observer v0.1.0 现已正式发布！
 ### 从 v0.1.x 升级
 ```bash
 # 备份当前配置
-sudo cp /etc/nuts/config.yaml /etc/nuts/config.yaml.backup
+sudo cp /etc/podflow/config.yaml /etc/podflow/config.yaml.backup
 
 # 升级到最新版本
 # 使用包管理器
-sudo yum update nuts-observer
+sudo yum update podflow
 # 或从源码升级
 git clone https://github.com/TDnorthgarden/PodFlow.git
 cd PodFlow
 cargo build --release
-sudo cp target/release/nuts-observer /usr/local/bin/
+sudo cp target/release/podflow /usr/local/bin/
 
 # 验证升级
-nuts-observer --version
+podflow --version
 ```
 
 ### 配置迁移
 ```bash
 # 检查配置兼容性
-nuts-observer --config-check
+podflow --config-check
 
 # 应用配置迁移
-sudo nuts-observer config-migrate
+sudo podflow config-migrate
 ```
 
 ## 🆘 问题反馈
@@ -233,7 +233,7 @@ sudo nuts-observer config-migrate
 
 ## 🎊 致谢
 
-感谢所有为 Nuts Observer 项目做出贡献的开发者、测试人员和用户！
+感谢所有为 PodFlow 项目做出贡献的开发者、测试人员和用户！
 
 特别感谢：
 - **核心开发团队** - 完成了项目的核心功能开发
@@ -241,14 +241,14 @@ sudo nuts-observer config-migrate
 - **文档团队** - 创建了完整的用户文档和最佳实践
 - **社区贡献者** - 提供了宝贵的反馈和改进建议
 
-Nuts Observer v0.1.0 的成功发布离不开每个人的努力和支持。让我们继续推动容器智能诊断技术的发展！
+PodFlow v0.1.0 的成功发布离不开每个人的努力和支持。让我们继续推动容器智能诊断技术的发展！
 
 ---
 
 ## 📞 相关链接
 
 - **项目主页**: https://github.com/TDnorthgarden/PodFlow
-- **文档网站**: https://docs.nuts-observer.com
+- **文档网站**: https://docs.podflow.com
 - **下载地址**: https://github.com/TDnorthgarden/PodFlow/releases
 - **问题反馈**: https://github.com/TDnorthgarden/PodFlow/issues
 
@@ -266,7 +266,7 @@ EOF
 echo "=== 发布前最终检查 ==="
 
 # 检查构建状态
-if [ -f "target/release/nuts-observer" ]; then
+if [ -f "target/release/podflow" ]; then
     echo "✅ 构建文件存在"
 else
     echo "❌ 构建文件缺失"
@@ -297,7 +297,7 @@ echo "=== 发布准备完成 ==="
 ### 发布确认
 ```bash
 # 最终发布确认
-echo "🎉 Nuts Observer v0.1.0 发布准备完成！"
+echo "🎉 PodFlow v0.1.0 发布准备完成！"
 echo "📋 版本: v0.1.0"
 echo "📅 日期: $(date)"
 echo "🔗 Git标签: v0.1.0"
@@ -319,7 +319,7 @@ echo "📝 准备执行发布流程..."
 
 ---
 
-*Nuts Observer v0.1.0 - 让容器故障诊断更智能、更高效！* 🚀
+*PodFlow v0.1.0 - 让容器故障诊断更智能、更高效！* 🚀
 EOF
 ```
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Nuts BPFtrace Adapter - 脚本输出标准化转换工具
+PodFlow BPFtrace Adapter - 脚本输出标准化转换工具
 
 提供功能:
 1. 验证bpftrace脚本输出是否符合标准
@@ -250,12 +250,12 @@ def print_validation_result(result: ValidationResult):
     if not result.metrics.get('has_end'):
         print("  - 在END探针中添加end标记事件")
     if result.event_count > 0 and not result.errors:
-        print("  - 输出格式符合标准，可以直接接入nuts-observer")
+        print("  - 输出格式符合标准，可以直接接入podflow")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Nuts BPFtrace 脚本输出验证与适配工具'
+        description='PodFlow BPFtrace 脚本输出验证与适配工具'
     )
     subparsers = parser.add_subparsers(dest='command', help='命令')
     
@@ -290,7 +290,7 @@ def main():
     elif args.command == 'template':
         # 复制模板
         import shutil
-        template_path = f'/root/nuts/scripts/bpftrace/templates/{args.type}.bt'
+        template_path = f'/root/podflow/scripts/bpftrace/templates/{args.type}.bt'
         if args.output:
             shutil.copy(template_path, args.output)
             print(f"模板已生成: {args.output}")

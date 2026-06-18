@@ -1,6 +1,6 @@
 //! CLI 命令行工具模块
 //!
-//! 提供命令行接口与 nuts-observer 服务交互
+//! 提供命令行接口与 podflow 服务交互
 
 use clap::{Parser, Subcommand};
 use reqwest;
@@ -44,9 +44,9 @@ fn setup_colors_based_on_tty() {
     }
 }
 
-/// Nuts Observer CLI
+/// PodFlow CLI
 #[derive(Parser)]
-#[command(name = "nuts-observer")]
+#[command(name = "podflow")]
 #[command(about = "容器智能故障分析插件 CLI")]
 #[command(version = "0.1.0")]
 pub struct Cli {
@@ -754,7 +754,7 @@ async fn run_watch_mode(
     // 打印表头
     println!("\n{} {}", 
         cyan(&bold("🐿️")), 
-        cyan(&bold("Nuts Observer Watch Mode"))
+        cyan(&bold("PodFlow Watch Mode"))
     );
     // 构建指标显示字符串
     let metrics_display = metrics
@@ -2260,7 +2260,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse() {
-        let cli = Cli::parse_from(["nuts-observer", "--server", "http://test:3000", "status"]);
+        let cli = Cli::parse_from(["podflow", "--server", "http://test:3000", "status"]);
         assert_eq!(cli.server, "http://test:3000");
         matches!(cli.command, Commands::Status);
     }
@@ -2268,7 +2268,7 @@ mod tests {
     #[test]
     fn test_trigger_command_parse() {
         let cli = Cli::parse_from([
-            "nuts-observer",
+            "podflow",
             "trigger",
             "--pod-uid", "test-001",
             "--namespace", "default",
